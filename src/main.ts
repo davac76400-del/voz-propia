@@ -8,6 +8,7 @@ import './ui/styles/views.css';
 import './ui/styles/guia.css';
 import './ui/styles/ayuda.css';
 import './ui/styles/consejos.css';
+import './ui/styles/dev.css';
 
 import { go, hashRoute, startRouter, type Route, type View } from './app/router';
 import { loadSettings, state, updateSettings } from './app/state';

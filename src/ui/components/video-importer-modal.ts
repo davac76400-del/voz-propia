@@ -4,170 +4,188 @@ import { processVideoFile } from '../../core/vision/video-processor';
 import { transcribeVideoAudio } from '../../core/vision/transcriber';
 import { segmentClips } from '../../core/vision/segmenter';
 import type { VideoClip } from '../../core/vision/segmenter';
+import { DEFAULT_FOLDER, insertClips, listFolders } from '../../core/supabase';
+import { esc } from '../dom';
 import { icon } from '../icons';
 import { toast } from './toast';
-import { saveProgrammerVideo } from '../../core/supabase';
 
-export async function openVideoImporter() {
+const round = (n: number) => Math.round(n * 10000) / 10000;
+
+export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
   const dlg = document.createElement('dialog');
-  dlg.className = 'sheet';
-  const uploadIcon = icon('upload', 18);
-  const closeIcon = icon('x', 20);
+  dlg.className = 'sheet dev-sheet';
+
+  let folders = [DEFAULT_FOLDER];
+  try {
+    folders = await listFolders();
+  } catch {
+    /* el selector funciona con la carpeta por defecto */
+  }
+  if (!folders.includes(startFolder)) startFolder = DEFAULT_FOLDER;
 
   dlg.innerHTML = `
-    <div class="sheet__inner">
+    <div class="sheet__inner dev">
       <header class="sheet__head">
-        <div><p class="kicker">[ Cargar video ]</p><h2>Importar ejemplos</h2></div>
-        <button class="icon-btn" type="button" data-close aria-label="Cerrar">${closeIcon}</button>
+        <div><p class="kicker">[ Importar ]</p><h2>Subir un video</h2></div>
+        <button class="icon-btn" type="button" data-close aria-label="Cerrar">${icon('x', 20)}</button>
       </header>
 
-      <div class="importer__container">
-        <input type="file" id="video-input" accept="video/*" style="display:none">
-        <button class="btn btn--primary" id="upload-btn" type="button">
-          ${uploadIcon}<span>Seleccionar video (40-60 seg)</span>
-        </button>
+      <label class="field">
+        <span class="field__label">Guardar en la carpeta</span>
+        <select class="input" id="imp-folder">
+          ${folders.map((f) => `<option value="${esc(f)}"${f === startFolder ? ' selected' : ''}>${esc(f)}</option>`).join('')}
+        </select>
+      </label>
 
-        <div id="progress" style="display:none; margin-top: 20px;">
-          <p id="status">Cargando...</p>
-          <progress id="progress-bar" value="0" max="100" style="width:100%; height:8px;"></progress>
-        </div>
+      <input type="file" id="imp-file" accept="video/*" hidden>
+      <button class="btn btn--primary btn--lg" id="imp-pick" type="button">${icon('upload', 20)}<span>Elegir video (40 a 60 s)</span></button>
 
-        <div id="clips-list" style="display:none; margin-top: 20px; max-height: 400px; overflow-y: auto;">
-          <!-- Clips aquí -->
-        </div>
+      <div id="imp-progress" class="dev-progress" hidden>
+        <progress></progress>
+        <p id="imp-status">Preparando…</p>
       </div>
+
+      <div id="imp-result" hidden></div>
     </div>`;
 
-  const fileInput = dlg.querySelector<HTMLInputElement>('#video-input')!;
-  const uploadBtn = dlg.querySelector<HTMLButtonElement>('#upload-btn')!;
-  const progressDiv = dlg.querySelector<HTMLDivElement>('#progress')!;
-  const statusText = dlg.querySelector<HTMLParagraphElement>('#status')!;
-  const clipsList = dlg.querySelector<HTMLDivElement>('#clips-list')!;
-  const closeBtn = dlg.querySelector<HTMLButtonElement>('[data-close]')!;
+  const q = <T extends HTMLElement>(sel: string) => dlg.querySelector<T>(sel)!;
+  const fileInput = q<HTMLInputElement>('#imp-file');
+  const pickBtn = q<HTMLButtonElement>('#imp-pick');
+  const progress = q<HTMLDivElement>('#imp-progress');
+  const status = q<HTMLParagraphElement>('#imp-status');
+  const result = q<HTMLDivElement>('#imp-result');
+  const folderSel = q<HTMLSelectElement>('#imp-folder');
 
   let clips: VideoClip[] = [];
+  let sourceName = '';
 
-  uploadBtn.addEventListener('click', () => fileInput.click());
+  const close = () => {
+    dlg.close();
+    dlg.remove();
+  };
+  q<HTMLButtonElement>('[data-close]').addEventListener('click', close);
+  dlg.addEventListener('close', () => dlg.remove());
+  pickBtn.addEventListener('click', () => fileInput.click());
 
-  fileInput.addEventListener('change', async (e) => {
-    const file = (e.target as HTMLInputElement).files?.[0];
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files?.[0];
     if (!file) return;
-
-    progressDiv.style.display = 'block';
-    uploadBtn.style.display = 'none';
-
+    sourceName = file.name;
+    pickBtn.hidden = true;
+    progress.hidden = false;
     try {
-      statusText.textContent = 'Extrayendo frames...';
+      status.textContent = 'Leyendo labios del video…';
       const frames = await processVideoFile(file);
-      statusText.textContent = 'Transcribiendo audio...';
+      status.textContent = 'Separando frases…';
       const segments = await transcribeVideoAudio(file);
-      statusText.textContent = 'Segmentando clips...';
       clips = segmentClips(frames, segments);
-
-      showClipsList(clips, clipsList, dlg);
-      progressDiv.style.display = 'none';
+      progress.hidden = true;
+      renderClips();
     } catch (err) {
-      toast(`Error: ${(err as Error).message}`, { tone: 'warn' });
-      progressDiv.style.display = 'none';
-      uploadBtn.style.display = 'block';
+      toast(`No se pudo procesar: ${(err as Error).message}`, { tone: 'warn' });
+      progress.hidden = true;
+      pickBtn.hidden = false;
     }
   });
 
-  closeBtn.addEventListener('click', () => dlg.close());
+  const renderClips = () => {
+    result.hidden = false;
+    if (!clips.length) {
+      result.innerHTML = `<p class="dev-note">No se encontraron labios en el video. Prueba con mejor luz y de frente.</p>`;
+      pickBtn.hidden = false;
+      return;
+    }
+    result.innerHTML = `
+      <p class="dev-note">${icon('info', 16)}<span>La transcripción automática todavía no está activa. Escribe la frase real de cada fragmento antes de guardar.</span></p>
+      <ul class="dev-clips">
+        ${clips
+          .map(
+            (c, i) => `
+          <li class="dev-clip" data-i="${i}">
+            <div class="dev-clip__main">
+              <input class="input" type="text" value="${esc(c.text)}" aria-label="Frase del fragmento ${i + 1}" data-text>
+              <p class="dev-meta">${((c.endTime - c.startTime) / 1000).toFixed(1)} s · ${c.lipPoints.length} cuadros</p>
+            </div>
+            <button class="icon-btn" type="button" data-skip aria-label="Quitar este fragmento">${icon('trash', 18)}</button>
+          </li>`,
+          )
+          .join('')}
+      </ul>
+      <button class="btn btn--primary btn--lg" id="imp-save" type="button">${icon('check', 20)}<span>Guardar ${clips.length} fragmento(s)</span></button>`;
+  };
+
+  const syncTexts = () => {
+    result.querySelectorAll<HTMLElement>('[data-i]').forEach((row) => {
+      const i = Number(row.dataset.i);
+      const v = row.querySelector<HTMLInputElement>('[data-text]')!.value.trim();
+      if (clips[i]) clips[i].text = v;
+    });
+  };
+
+  const save = async () => {
+    syncTexts();
+    const ready = clips.filter((c) => c.text.length > 0);
+    if (!ready.length) return void toast('Escribe al menos una frase.', { tone: 'warn' });
+    const btn = q<HTMLButtonElement>('#imp-save');
+    btn.disabled = true;
+    try {
+      await insertClips(
+        ready.map((c) => ({
+          text: c.text,
+          start_time: c.startTime,
+          end_time: c.endTime,
+          frame_count: c.lipPoints.length,
+          folder: folderSel.value,
+          source_name: sourceName,
+          lip_points: c.lipPoints.map((f) => ({
+            t: f.timestamp,
+            p: f.lipPoints.map((p) => [round(p.x), round(p.y), round(p.z)]),
+          })),
+        })),
+      );
+      await addToEngine(ready);
+      toast(`${ready.length} fragmento(s) guardados en «${folderSel.value}».`, { tone: 'ok' });
+      close();
+    } catch (err) {
+      btn.disabled = false;
+      toast(`No se pudo guardar: ${(err as Error).message}`, { tone: 'warn' });
+    }
+  };
+
+  result.addEventListener('click', async (e) => {
+    const t = e.target as HTMLElement;
+    const skip = t.closest<HTMLElement>('[data-skip]');
+    if (skip) {
+      const i = Number(skip.closest<HTMLElement>('[data-i]')!.dataset.i);
+      syncTexts();
+      clips.splice(i, 1);
+      renderClips();
+      return;
+    }
+    if (t.closest('#imp-save')) await save();
+  });
 
   document.body.appendChild(dlg);
   dlg.showModal();
 }
 
-function showClipsList(clips: VideoClip[], container: HTMLDivElement, dlg: HTMLDialogElement) {
-  const saveIcon = icon('save', 16);
-  const clipCount = clips.length;
-
-  container.innerHTML = `
-    <div style="margin-bottom: 10px;">
-      <p><b>${clipCount} clips encontrados</b></p>
-    </div>
-    <ul style="list-style: none; padding: 0;">
-      ${clips
-        .map(
-          (clip, i) => {
-            const duration = (clip.endTime - clip.startTime).toFixed(1);
-            const frameCount = clip.lipPoints.length;
-            return `
-        <li class="pcard" style="margin-bottom: 10px;">
-          <div class="pcard__body">
-            <p class="pcard__text">${clip.text}</p>
-            <p class="pcard__meta">${duration}s · ${frameCount} frames</p>
-          </div>
-          <button class="btn btn--sm btn--primary" type="button" data-accept="${i}">Aceptar</button>
-        </li>
-      `;
-          },
-        )
-        .join('')}
-    </ul>
-    <button class="btn btn--primary" id="save-all" type="button" style="width: 100%; margin-top: 15px;">
-      ${saveIcon}<span>Guardar todos</span>
-    </button>`;
-
-  container.style.display = 'block';
-
-  container.querySelector('#save-all')?.addEventListener('click', async () => {
-    await saveClips(clips, dlg);
-  });
-
-  container.querySelectorAll('[data-accept]').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
-      const idx = parseInt((e.target as HTMLElement).getAttribute('data-accept')!);
-      await saveClips([clips[idx]], dlg);
-    });
-  });
-}
-
-async function saveClips(clipsToSave: VideoClip[], dlg: HTMLDialogElement) {
-  let saved = 0;
-
-  for (const clip of clipsToSave) {
+async function addToEngine(clips: VideoClip[]) {
+  for (const clip of clips) {
     const phrase = engine.phrases.find((p) => p.text.toLowerCase() === clip.text.toLowerCase());
-
-    if (!phrase) {
-      toast(`No encontré la frase «${clip.text}». Créala primero.`, { tone: 'warn' });
-      continue;
-    }
-
+    if (!phrase) continue;
     try {
-      const seq = convertToLipSequence(clip);
-      await engine.addSample(phrase.id, seq, 'grabacion');
-
-      const lipPointsData = clip.lipPoints.map((frame) => ({
-        timestamp: frame.timestamp,
-        lipPoints: frame.lipPoints,
-      }));
-
-      await saveProgrammerVideo({
-        text: clip.text,
-        start_time: clip.startTime,
-        end_time: clip.endTime,
-        lip_points: lipPointsData,
-        imported_by: 'programmer',
-      });
-
-      saved++;
+      await engine.addSample(phrase.id, toLipSequence(clip), 'grabacion');
     } catch (err) {
-      console.error('Error saving clip:', err);
+      console.error('No se pudo añadir al motor:', err);
     }
   }
-
-  toast(`${saved} clip(s) guardado(s). Frase lista para entrenar.`, { tone: 'ok' });
-  dlg.close();
 }
 
-function convertToLipSequence(clip: VideoClip): LipSequence {
-  const allPoints = clip.lipPoints.flatMap((frame) => frame.lipPoints.flatMap((p) => [p.x, p.y, p.z]));
-
+function toLipSequence(clip: VideoClip): LipSequence {
+  const all = clip.lipPoints.flatMap((frame) => frame.lipPoints.flatMap((p) => [p.x, p.y, p.z]));
   return {
-    dims: clip.lipPoints[0]?.lipPoints.length * 3 || 63,
-    frames: new Float32Array(allPoints),
+    dims: (clip.lipPoints[0]?.lipPoints.length ?? 21) * 3,
+    frames: new Float32Array(all),
     fps: 25,
   };
 }

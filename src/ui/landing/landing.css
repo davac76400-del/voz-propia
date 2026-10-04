@@ -1952,3 +1952,45 @@ form.is-shake { animation: l-shake 0.4s; }
   .l-jz__stickers i { animation: none; }
 }
 .landing[data-stage='4'] .l-header .l-chip { color: var(--l-night-ink); }
+
+/* ---------- Tarjeta Soy programador ---------- */
+
+.l-role--dev {
+  color: #f7f5ff;
+  background: radial-gradient(120% 140% at 100% 0%, rgb(225 252 3 / 0.18), transparent 55%), linear-gradient(160deg, #1b1446 0%, #0d0a2a 100%);
+  border-color: rgb(183 156 255 / 0.34);
+  box-shadow: 0 40px 90px -40px rgb(0 0 0 / 0.9), inset 0 1px 0 rgb(255 255 255 / 0.1);
+}
+
+.l-role--dev .l-role__tag {
+  color: #e1fc03;
+  background: rgb(225 252 3 / 0.1);
+  border: 1px solid rgb(225 252 3 / 0.32);
+}
+
+.l-role--dev .l-role__desc {
+  color: #d6d0f2;
+}
+
+.l-role--dev .l-role__cta {
+  color: #1a1500;
+  background: linear-gradient(180deg, #f0ff4d, #e1fc03);
+  box-shadow: 0 12px 30px -10px rgb(225 252 3 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.5);
+}
+
+.l-role--dev .l-orb {
+  width: 40px;
+  height: 40px;
+  color: #e1fc03;
+  background: radial-gradient(circle at 50% 30%, #2d2566 0%, #0d0a2a 100%);
+}
+
+@media (min-width: 761px) {
+  .l-role--dev {
+    grid-column: 1 / -1;
+    min-height: 300px;
+  }
+  .l-role--dev .l-role__desc {
+    max-width: 44ch;
+  }
+}

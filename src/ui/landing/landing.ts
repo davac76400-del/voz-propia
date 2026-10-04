@@ -11,7 +11,7 @@ import { brandMark } from '../brand';
 import { bindHold, holdRing } from '../components/hold';
 import { reducedMotion, sleep, vibrate } from '../dom';
 import { icon } from '../icons';
-import { openVideoImporter } from '../components/video-importer-modal';
+import { openDevPanel } from '../components/dev-panel';
 import type { FieldControl, GravityField, Pointer } from './scene';
 
 interface Options {
@@ -985,21 +985,21 @@ export function mountLanding(app: HTMLElement, opts: Options) {
 
   const showDevGate = () => {
     const dlg = document.createElement('dialog');
-    dlg.className = 'sheet';
+    dlg.className = 'sheet dev-sheet';
     dlg.innerHTML = `
-      <div class="sheet__inner">
+      <div class="sheet__inner dev">
         <header class="sheet__head">
           <div><p class="kicker">[ Acceso ]</p><h2>Soy programador</h2></div>
           <button class="icon-btn" type="button" data-close aria-label="Cerrar">${icon('x', 20)}</button>
         </header>
-        <div style="padding: 20px;">
-          <label style="display: block; margin-bottom: 16px;">
-            <span style="display: block; font-size: 14px; margin-bottom: 8px;">Contraseña</span>
-            <input type="password" id="dev-pwd" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px;" placeholder="Ingresa la contraseña" autocomplete="off">
+        <form class="dev-gate" onsubmit="return false">
+          <label class="field">
+            <span class="field__label">Contraseña</span>
+            <input type="password" id="dev-pwd" class="input" placeholder="Escribe la contraseña" autocomplete="off">
           </label>
-          <p id="dev-err" style="color: #ff4444; font-size: 12px; margin-bottom: 16px; display: none;"></p>
-          <button class="btn btn--primary" id="dev-submit" type="button" style="width: 100%;">Entrar</button>
-        </div>
+          <p id="dev-err" class="field__error" role="alert" hidden></p>
+          <button class="btn btn--primary btn--lg" id="dev-submit" type="button">Entrar</button>
+        </form>
       </div>`;
 
     document.body.appendChild(dlg);
@@ -1017,10 +1017,10 @@ export function mountLanding(app: HTMLElement, opts: Options) {
       if (pwd === '76767678') {
         dlg.close();
         dlg.remove();
-        openVideoImporter();
+        openDevPanel();
       } else {
         errMsg.textContent = 'Contraseña incorrecta';
-        errMsg.style.display = 'block';
+        errMsg.hidden = false;
         pwdInput.value = '';
         pwdInput.focus();
         vibrate([30, 50, 30]);
