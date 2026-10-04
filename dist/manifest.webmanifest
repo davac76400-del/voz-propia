@@ -1,0 +1,43 @@
+{
+  "name": "Voz Propia",
+  "short_name": "Voz Propia",
+  "description": "Lectura de labios personal y sin internet para quien perdió la voz. Modo usuario para hablar y modo programador para prepararla.",
+  "lang": "es-MX",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ECEFFF",
+  "theme_color": "#ECEFFF",
+  "categories": [
+    "medical",
+    "health",
+    "accessibility"
+  ],
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -11,6 +11,7 @@ import { brandMark } from '../brand';
 import { bindHold, holdRing } from '../components/hold';
 import { reducedMotion, sleep, vibrate } from '../dom';
 import { icon } from '../icons';
+import { openVideoImporter } from '../components/video-importer-modal';
 import type { FieldControl, GravityField, Pointer } from './scene';
 
 interface Options {
@@ -245,6 +246,12 @@ function template() {
               <span class="l-role__title">Consejos para usar Voz Propia</span>
               <span class="l-role__desc">Cómo ponerte frente a la cámara, cómo mover los labios, letras que se ven igual, qué hacer si duda y cómo puede ayudar tu familia.</span>
               <span class="l-role__cta"><span>Ver los consejos</span>${orbChevron()}</span>
+            </button>
+            <button class="l-role l-role--dev" type="button" data-dev data-reveal style="--d:.24s">
+              <span class="l-role__tag">${icon('code', 15)} Desarrollador</span>
+              <span class="l-role__title">Soy programador</span>
+              <span class="l-role__desc">Importar videos para entrenar la IA con ejemplos de labios.</span>
+              <span class="l-role__cta"><span>Importar videos</span>${orbChevron()}</span>
             </button>
           </div>
         </div>
@@ -969,9 +976,68 @@ export function mountLanding(app: HTMLElement, opts: Options) {
         chosen = 'usuario';
         return void enter('consejos');
       }
+      if (t.closest('[data-dev]')) {
+        return showDevGate();
+      }
     },
     { signal },
   );
+
+  const showDevGate = () => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'sheet';
+    dlg.innerHTML = `
+      <div class="sheet__inner">
+        <header class="sheet__head">
+          <div><p class="kicker">[ Acceso ]</p><h2>Soy programador</h2></div>
+          <button class="icon-btn" type="button" data-close aria-label="Cerrar">${icon('x', 20)}</button>
+        </header>
+        <div style="padding: 20px;">
+          <label style="display: block; margin-bottom: 16px;">
+            <span style="display: block; font-size: 14px; margin-bottom: 8px;">Contraseña</span>
+            <input type="password" id="dev-pwd" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px;" placeholder="Ingresa la contraseña" autocomplete="off">
+          </label>
+          <p id="dev-err" style="color: #ff4444; font-size: 12px; margin-bottom: 16px; display: none;"></p>
+          <button class="btn btn--primary" id="dev-submit" type="button" style="width: 100%;">Entrar</button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(dlg);
+    dlg.showModal();
+
+    const pwdInput = dlg.querySelector<HTMLInputElement>('#dev-pwd')!;
+    const errMsg = dlg.querySelector<HTMLElement>('#dev-err')!;
+    const submitBtn = dlg.querySelector<HTMLButtonElement>('#dev-submit')!;
+    const closeBtn = dlg.querySelector<HTMLButtonElement>('[data-close]')!;
+
+    pwdInput.focus();
+
+    const checkPassword = () => {
+      const pwd = pwdInput.value;
+      if (pwd === '76767678') {
+        dlg.close();
+        dlg.remove();
+        openVideoImporter();
+      } else {
+        errMsg.textContent = 'Contraseña incorrecta';
+        errMsg.style.display = 'block';
+        pwdInput.value = '';
+        pwdInput.focus();
+        vibrate([30, 50, 30]);
+      }
+    };
+
+    submitBtn.addEventListener('click', checkPassword);
+    pwdInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') checkPassword();
+    });
+    closeBtn.addEventListener('click', () => {
+      dlg.close();
+      dlg.remove();
+    });
+
+    dlg.addEventListener('close', () => dlg.remove());
+  };
 
   return () => {
     disposed = true;

@@ -6,6 +6,7 @@ import { segmentClips } from '../../core/vision/segmenter';
 import type { VideoClip } from '../../core/vision/segmenter';
 import { icon } from '../icons';
 import { toast } from './toast';
+import { saveProgrammerVideo } from '../../core/supabase';
 
 export async function openVideoImporter() {
   const dlg = document.createElement('dialog');
@@ -137,6 +138,20 @@ async function saveClips(clipsToSave: VideoClip[], dlg: HTMLDialogElement) {
     try {
       const seq = convertToLipSequence(clip);
       await engine.addSample(phrase.id, seq, 'grabacion');
+
+      const lipPointsData = clip.lipPoints.map((frame) => ({
+        timestamp: frame.timestamp,
+        lipPoints: frame.lipPoints,
+      }));
+
+      await saveProgrammerVideo({
+        text: clip.text,
+        start_time: clip.startTime,
+        end_time: clip.endTime,
+        lip_points: lipPointsData,
+        imported_by: 'programmer',
+      });
+
       saved++;
     } catch (err) {
       console.error('Error saving clip:', err);
