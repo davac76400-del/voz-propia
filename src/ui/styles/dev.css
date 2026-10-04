@@ -528,3 +528,59 @@
   border-color: color-mix(in srgb, var(--warn) 55%, transparent);
   color: var(--warn);
 }
+
+.dev-score {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border-radius: var(--r-lg);
+  font-weight: 600;
+}
+
+.dev-score__n {
+  font: 800 var(--fs-3xl) / 1 var(--font-display);
+  letter-spacing: -0.03em;
+}
+
+.dev-score--ok { background: var(--ok-soft); color: var(--ok); }
+.dev-score--mid { background: var(--warn-soft); color: var(--warn); }
+.dev-score--low { background: var(--danger-soft); color: var(--danger); }
+.dev-score p:last-child { color: var(--ink); }
+
+.dev-eval {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dev-eval__row {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.dev-eval__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dev-eval__bar {
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.dev-eval__bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}

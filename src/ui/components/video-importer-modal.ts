@@ -1,4 +1,4 @@
-import { engine, MAX_SAMPLES_PER_PHRASE } from '../../core/engine';
+import { engine } from '../../core/engine';
 import { dtw } from '../../core/learn/dtw';
 import type { LipSequence } from '../../core/types';
 import { FEATURE_DIMS } from '../../core/vision/lip-features';
@@ -6,6 +6,7 @@ import { phraseFromFilename } from '../../core/vision/filename-phrase';
 import { collapseRepeats, splitRepetitions, sparkline, type Pause, type Repetition } from '../../core/vision/repetitions';
 import { processVideoFile, type FrameFeatures } from '../../core/vision/video-processor';
 import { transcribeVideoAudio } from '../../core/vision/transcriber';
+import { publishPhrase, syncShared } from '../../core/shared-sync';
 import { DEFAULT_FOLDER, insertClips, listFolders } from '../../core/supabase';
 import { esc } from '../dom';
 import { icon } from '../icons';
@@ -310,6 +311,7 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
     if (!ready.length) return void toast('Escribe la frase de cada video.', { tone: 'warn' });
     const btn = q<HTMLButtonElement>('#imp-save');
     btn.disabled = true;
+    let published = true;
     try {
       for (const g of ready) {
         const phrase = g.phrase.trim();
@@ -328,11 +330,23 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
         });
         for (let i = 0; i < rows.length; i += INSERT_BATCH) await insertClips(rows.slice(i, i + INSERT_BATCH));
 
-        const best = [...kept].sort((a, b) => a.score - b.score).slice(0, MAX_SAMPLES_PER_PHRASE);
-        await addToEngine(phrase, best.map((r) => toLipSequence(r.rep)));
+        const ok = await publishPhrase(phrase).then(
+          () => true,
+          (err) => {
+            console.warn('No se pudo publicar:', err);
+            return false;
+          },
+        );
+        if (!ok) published = false;
       }
+      await syncShared();
       const total = ready.reduce((n, g) => n + g.reps.filter((r) => r.keep).length, 0);
-      toast(`${total} ejemplo${total === 1 ? '' : 's'} guardado${total === 1 ? '' : 's'} en «${folderSel.value}».`, { tone: 'ok' });
+      toast(
+        published
+          ? `${total} ejemplo${total === 1 ? '' : 's'} guardado${total === 1 ? '' : 's'} y publicado${total === 1 ? '' : 's'} para todos.`
+          : `${total} ejemplo${total === 1 ? '' : 's'} guardado${total === 1 ? '' : 's'}, pero no se pudo publicar para los demás dispositivos.`,
+        { tone: published ? 'ok' : 'warn' },
+      );
       close();
     } catch (err) {
       btn.disabled = false;
@@ -346,16 +360,4 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
 
   document.body.appendChild(dlg);
   dlg.showModal();
-}
-
-async function addToEngine(text: string, seqs: LipSequence[]) {
-  try {
-    const wanted = text.toLowerCase();
-    const phrase =
-      engine.phrases.find((p) => p.text.trim().toLowerCase() === wanted) ??
-      (await engine.savePhrase({ text, icon: 'sparkles', category: 'necesidad' }));
-    await engine.addSamples(phrase.id, seqs, 'grabacion');
-  } catch (err) {
-    console.error('No se pudo añadir al motor:', err);
-  }
 }

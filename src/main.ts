@@ -14,6 +14,7 @@ import { go, hashRoute, startRouter, type Route, type View } from './app/router'
 import { loadSettings, state, updateSettings } from './app/state';
 import { session } from './core/auth';
 import { engine } from './core/engine';
+import { syncShared, watchShared } from './core/shared-sync';
 import { db } from './core/storage/db';
 import type { Role } from './core/types';
 import { tracker } from './core/vision/face-tracker';
@@ -251,6 +252,8 @@ async function boot() {
   enableTilt(document.body);
   await loadSettings();
   await engine.load();
+  void syncShared();
+  watchShared();
   addEventListener('hashchange', () => void route());
   // Siempre se abre en el inicio (con su cargador); solo el modo programador conserva su dirección.
   const first = hashRoute().split('/')[0];

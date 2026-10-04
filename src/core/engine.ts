@@ -7,7 +7,8 @@ import { DEFAULT_PHRASES } from '../data/default-phrases';
 
 type Listener = () => void;
 
-export const MAX_SAMPLES_PER_PHRASE = 8;
+export const MAX_SAMPLES_PER_PHRASE = 12;
+const SHARED_PREFIX = 'shared:';
 /** Ejemplos con los que una frase se considera lista. */
 export const READY_SAMPLES = 3;
 
@@ -109,7 +110,7 @@ class Engine {
     this.samples.push(s);
     await db.putSample(s);
     // Al pasar del máximo se descarta el ejemplo más viejo: la app se adapta a cómo hablas hoy.
-    const own = this.samples.filter((x) => x.phraseId === phraseId).sort((a, b) => a.createdAt - b.createdAt);
+    const own = this.samples.filter((x) => x.phraseId === phraseId && !x.id.startsWith(SHARED_PREFIX)).sort((a, b) => a.createdAt - b.createdAt);
     while (own.length > MAX_SAMPLES_PER_PHRASE) {
       const old = own.shift()!;
       this.samples = this.samples.filter((x) => x.id !== old.id);
@@ -126,7 +127,7 @@ class Engine {
       this.samples.push(s);
       await db.putSample(s);
     }
-    const own = this.samples.filter((x) => x.phraseId === phraseId).sort((a, b) => a.createdAt - b.createdAt);
+    const own = this.samples.filter((x) => x.phraseId === phraseId && !x.id.startsWith(SHARED_PREFIX)).sort((a, b) => a.createdAt - b.createdAt);
     while (own.length > MAX_SAMPLES_PER_PHRASE) {
       const old = own.shift()!;
       this.samples = this.samples.filter((x) => x.id !== old.id);
@@ -136,9 +137,74 @@ class Engine {
   }
 
   async clearSamples(phraseId: string) {
-    for (const s of this.samples.filter((x) => x.phraseId === phraseId)) await db.deleteSample(s.id);
-    this.samples = this.samples.filter((x) => x.phraseId !== phraseId);
+    for (const s of this.samples.filter((x) => x.phraseId === phraseId && !x.id.startsWith(SHARED_PREFIX))) await db.deleteSample(s.id);
+    this.samples = this.samples.filter((x) => x.phraseId !== phraseId || x.id.startsWith(SHARED_PREFIX));
     await this.retrain();
+  }
+
+  /**
+   * Pone en este dispositivo las frases y ejemplos que el programador publicó.
+   * Los ejemplos compartidos se reemplazan por completo; los que grabó la persona no se tocan.
+   */
+  async applyShared(items: { key: string; text: string; seqs: LipSequence[] }[], removedKeys: string[]) {
+    const dropShared = async (key: string) => {
+      const prefix = `${SHARED_PREFIX}${key}:`;
+      for (const s of this.samples.filter((x) => x.id.startsWith(prefix))) await db.deleteSample(s.id);
+      this.samples = this.samples.filter((x) => !x.id.startsWith(prefix));
+    };
+    for (const it of items) {
+      const phrase =
+        this.phrases.find((p) => p.text.trim().toLowerCase() === it.key) ??
+        (await this.savePhrase({ text: it.text, icon: 'sparkles', category: 'necesidad' }));
+      await dropShared(it.key);
+      const now = Date.now();
+      for (const [i, seq] of it.seqs.entries()) {
+        const s: Sample = { id: `${SHARED_PREFIX}${it.key}:${i}`, phraseId: phrase.id, seq, source: 'grabacion', createdAt: now + i };
+        this.samples.push(s);
+        await db.putSample(s);
+      }
+    }
+    for (const key of removedKeys) await dropShared(key);
+    await this.retrain();
+  }
+
+  /** Mide la precisión con los ejemplos que ya hay: cada uno se clasifica sin contarse a sí mismo. */
+  async evaluate(onProgress?: (done: number, total: number) => void) {
+    const textOf = (id: string) => this.phrase(id)?.text ?? '?';
+    const n = this.classifier.itemCount;
+    const stride = n > 400 ? Math.ceil(n / 400) : 1;
+    const perPhrase = new Map<string, { total: number; correct: number; confused: Map<string, number> }>();
+    let total = 0;
+    let correct = 0;
+    let done = 0;
+    for (let i = 0; i < n; i += stride) {
+      const r = this.classifier.leaveOneOut(i);
+      done++;
+      if (done % 10 === 0) {
+        onProgress?.(done, Math.ceil(n / stride));
+        await new Promise((res) => setTimeout(res));
+      }
+      if (!r) continue;
+      const name = textOf(r.actual);
+      const row = perPhrase.get(name) ?? perPhrase.set(name, { total: 0, correct: 0, confused: new Map() }).get(name)!;
+      row.total++;
+      total++;
+      if (r.actual === r.predicted) {
+        row.correct++;
+        correct++;
+      } else {
+        const other = textOf(r.predicted);
+        row.confused.set(other, (row.confused.get(other) ?? 0) + 1);
+      }
+    }
+    const rows = [...perPhrase].map(([text, v]) => ({
+      text,
+      total: v.total,
+      correct: v.correct,
+      confused: [...v.confused].sort((a, b) => b[1] - a[1]).map(([t, c]) => ({ text: t, count: c })),
+    }));
+    rows.sort((a, b) => a.correct / a.total - b.correct / b.total);
+    return { total, correct, rows, phrasesWithTooFew: this.phrases.filter((p) => this.sampleCount(p.id) === 1).map((p) => p.text) };
   }
 
   async savePhrase(p: Omit<Phrase, 'id' | 'order' | 'createdAt'> & Partial<Phrase>) {

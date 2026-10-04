@@ -11,6 +11,8 @@ import {
 } from '../../core/supabase';
 import { esc } from '../dom';
 import { icon } from '../icons';
+import { publishPhrase, syncShared } from '../../core/shared-sync';
+import { openPrecision } from './dev-eval';
 import { openVideoImporter } from './video-importer-modal';
 import { toast } from './toast';
 
@@ -62,6 +64,7 @@ export function openDevPanel() {
           ${icon('search', 18)}
           <input class="input" id="dev-q" type="search" placeholder="Buscar una frase o un video" autocomplete="off">
         </label>
+        <button class="btn btn--soft" id="dev-eval" type="button">${icon('gauge', 18)}<span>Probar precisión</span></button>
         <button class="btn btn--primary" id="dev-import" type="button">${icon('upload', 18)}<span>Importar video</span></button>
       </div>
 
@@ -200,9 +203,22 @@ export function openDevPanel() {
     renderMain();
   };
 
-  const guard = async (fn: () => Promise<void>, okMsg?: string) => {
+  const textsOf = (ids: number[]) => [...new Set(clips.filter((c) => ids.includes(c.id)).map((c) => c.text.trim()))];
+
+  /** Lo que se borra o se mueve también se actualiza para todos los dispositivos. */
+  const publish = async (texts: string[]) => {
+    try {
+      for (const t of texts) await publishPhrase(t);
+      await syncShared();
+    } catch (err) {
+      toast(`Se guardó aquí, pero no se pudo publicar para todos: ${(err as Error).message}`, { tone: 'warn' });
+    }
+  };
+
+  const guard = async (fn: () => Promise<void>, okMsg?: string, texts: string[] = []) => {
     try {
       await fn();
+      if (texts.length) await publish(texts);
       if (okMsg) toast(okMsg, { tone: 'ok' });
       await load();
     } catch (err) {
@@ -236,6 +252,7 @@ export function openDevPanel() {
     if (t.closest('#dev-import') || t.closest('[data-import]')) {
       return void openVideoImporter(active === ALL ? DEFAULT_FOLDER : active);
     }
+    if (t.closest('#dev-eval')) return void openPrecision();
     if (t.closest('[data-retry]')) return void load();
 
     if (t.closest('[data-new-folder]')) {
@@ -258,13 +275,13 @@ export function openDevPanel() {
     const delGroup = t.closest<HTMLElement>('[data-del-group]');
     if (delGroup) {
       const ids = delGroup.closest<HTMLElement>('[data-ids]')!.dataset.ids!.split(',').map(Number);
-      return arm(delGroup, '¿Borrar todo?', () => void guard(() => deleteClips(ids), 'Video borrado.'));
+      return arm(delGroup, '¿Borrar todo?', () => void guard(() => deleteClips(ids), 'Video borrado.', textsOf(ids)));
     }
 
     const del = t.closest<HTMLElement>('[data-del]');
     if (del) {
       const ids = idsOf(del);
-      return arm(del, '¿Borrar?', () => void guard(() => deleteClips(ids), ids.length === 1 ? 'Ejemplo borrado.' : 'Frase borrada.'));
+      return arm(del, '¿Borrar?', () => void guard(() => deleteClips(ids), ids.length === 1 ? 'Ejemplo borrado.' : 'Frase borrada.', textsOf(ids)));
     }
   });
 
@@ -283,7 +300,10 @@ export function openDevPanel() {
   dlg.addEventListener('change', (e) => {
     const sel = (e.target as HTMLElement).closest<HTMLSelectElement>('[data-move]');
     if (!sel) return;
-    void guard(() => moveClips(idsOf(sel), sel.value), `Movida a «${sel.value}».`);
+    {
+      const ids = idsOf(sel);
+      void guard(() => moveClips(ids, sel.value), `Movida a «${sel.value}».`);
+    }
   });
 
   q<HTMLInputElement>('#dev-q').addEventListener('input', (e) => {

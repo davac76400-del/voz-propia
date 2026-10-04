@@ -34,6 +34,10 @@ export class FewShotClassifier {
     return this.items.length;
   }
 
+  get itemCount() {
+    return this.items.length;
+  }
+
   get phraseCount() {
     return new Set(this.items.map((i) => i.phraseId)).size;
   }
@@ -103,6 +107,32 @@ export class FewShotClassifier {
     if (intra.length) return Math.max(median(intra), 1e-3);
     if (inter.length) return Math.max(median(inter) * 0.4, 1e-3);
     return 1;
+  }
+
+  /** Qué frase elegiría cada ejemplo si no existiera él mismo. Sirve para medir la precisión con tus propios datos. */
+  leaveOneOut(index: number): { actual: string; predicted: string } | null {
+    const me = this.items[index];
+    const perPhrase = new Map<string, number[]>();
+    for (let j = 0; j < this.items.length; j++) {
+      if (j === index) continue;
+      const it = this.items[j];
+      const d = dtw(me.x, it.x, this.L, this.D);
+      const list = perPhrase.get(it.phraseId);
+      if (list) list.push(d);
+      else perPhrase.set(it.phraseId, [d]);
+    }
+    if (!perPhrase.has(me.phraseId) || perPhrase.size < 2) return null;
+    let best = '';
+    let bestD = Infinity;
+    for (const [phraseId, ds] of perPhrase) {
+      ds.sort((a, b) => a - b);
+      const distance = ds.length >= 3 ? (ds[0] + ds[1]) / 2 : ds[0];
+      if (distance < bestD) {
+        bestD = distance;
+        best = phraseId;
+      }
+    }
+    return { actual: me.phraseId, predicted: best };
   }
 
   predict(emb: Embedded, autoSpeakThreshold: number, topK = 3): Prediction {
