@@ -16,3 +16,4 @@ __pycache__/
 
 # pruebas: playwright se instala aparte, no se versiona
 pruebas/node_modules/
+dist/
