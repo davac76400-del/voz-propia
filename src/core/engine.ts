@@ -118,6 +118,23 @@ class Engine {
     await this.retrain();
   }
 
+  /** Agrega varios ejemplos de una frase y entrena una sola vez. */
+  async addSamples(phraseId: string, seqs: LipSequence[], source: Sample['source'] = 'grabacion') {
+    const base = Date.now();
+    for (const [i, seq] of seqs.entries()) {
+      const s: Sample = { id: uid(), phraseId, seq, source, createdAt: base + i };
+      this.samples.push(s);
+      await db.putSample(s);
+    }
+    const own = this.samples.filter((x) => x.phraseId === phraseId).sort((a, b) => a.createdAt - b.createdAt);
+    while (own.length > MAX_SAMPLES_PER_PHRASE) {
+      const old = own.shift()!;
+      this.samples = this.samples.filter((x) => x.id !== old.id);
+      await db.deleteSample(old.id);
+    }
+    await this.retrain();
+  }
+
   async clearSamples(phraseId: string) {
     for (const s of this.samples.filter((x) => x.phraseId === phraseId)) await db.deleteSample(s.id);
     this.samples = this.samples.filter((x) => x.phraseId !== phraseId);

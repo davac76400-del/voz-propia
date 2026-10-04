@@ -24,6 +24,22 @@ interface Group {
   clips: DevClip[];
 }
 
+const idsOf = (el: HTMLElement) => el.closest<HTMLElement>('[data-phrase-ids]')!.dataset.phraseIds!.split(',').map(Number);
+
+/** Los ejemplos de la misma frase dentro de un video se muestran juntos. */
+function phraseRows(clips: DevClip[]) {
+  const map = new Map<string, DevClip[]>();
+  for (const c of [...clips].sort((a, b) => a.start_time - b.start_time)) {
+    const key = c.text.trim().toLowerCase();
+    (map.get(key) ?? map.set(key, []).get(key)!).push(c);
+  }
+  return [...map.values()].map((list) => ({
+    text: list[0].text,
+    clips: list,
+    avgMs: list.reduce((n, c) => n + (c.end_time - c.start_time), 0) / list.length,
+  }));
+}
+
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
@@ -111,7 +127,7 @@ export function openDevPanel() {
     for (const c of clips) {
       if (active !== ALL && c.folder !== active) continue;
       if (term && !c.text.toLowerCase().includes(term) && !(c.source_name ?? '').toLowerCase().includes(term)) continue;
-      const key = `${c.source_name ?? ''}|${c.created_at.slice(0, 16)}|${c.folder}`;
+      const key = `${c.source_name ?? ''}|${c.created_at.slice(0, 15)}|${c.folder}`;
       let g = map.get(key);
       if (!g) {
         g = { key, name: c.source_name || 'Video sin nombre', date: c.created_at, folder: c.folder, clips: [] };
@@ -155,23 +171,21 @@ export function openDevPanel() {
           <span class="dev-group__ic">${icon('play', 18)}</span>
           <div class="dev-group__title">
             <h4>${esc(g.name)}</h4>
-            <p class="dev-meta">${g.clips.length} frase(s) · ${fmtDate(g.date)}${active === ALL ? ` · ${esc(g.folder)}` : ''}</p>
+            <p class="dev-meta">${phraseRows(g.clips).length} frase(s) · ${g.clips.length} ejemplo(s) · ${fmtDate(g.date)}${active === ALL ? ` · ${esc(g.folder)}` : ''}</p>
           </div>
           <button class="btn btn--ghost btn--sm" type="button" data-del-group>${icon('trash', 16)}<span>Borrar video</span></button>
         </header>
         <ul class="dev-phrases">
-          ${g.clips
-            .slice()
-            .sort((a, b) => a.start_time - b.start_time)
+          ${phraseRows(g.clips)
             .map(
-              (c) => `
-            <li class="dev-phrase" data-id="${c.id}">
+              (row) => `
+            <li class="dev-phrase" data-phrase-ids="${row.clips.map((c) => c.id).join(',')}">
               <div class="dev-phrase__body">
-                <p class="dev-phrase__text">${esc(c.text)}</p>
-                <p class="dev-meta">${((c.end_time - c.start_time) / 1000).toFixed(1)} s · ${c.frame_count} cuadros</p>
+                <p class="dev-phrase__text">${esc(row.text)}</p>
+                <p class="dev-meta">${row.clips.length === 1 ? '1 ejemplo' : `${row.clips.length} ejemplos`} · ${(row.avgMs / 1000).toFixed(1)} s cada uno</p>
               </div>
-              <select class="input dev-move" data-move aria-label="Mover a otra carpeta">${folderOpts(c.folder)}</select>
-              <button class="icon-btn dev-del" type="button" data-del aria-label="Borrar frase">${icon('trash', 18)}</button>
+              <select class="input dev-move" data-move aria-label="Mover a otra carpeta">${folderOpts(row.clips[0].folder)}</select>
+              <button class="icon-btn dev-del" type="button" data-del aria-label="Borrar ${row.clips.length === 1 ? 'el ejemplo' : 'los ejemplos'}">${icon('trash', 18)}</button>
             </li>`,
             )
             .join('')}
@@ -249,8 +263,8 @@ export function openDevPanel() {
 
     const del = t.closest<HTMLElement>('[data-del]');
     if (del) {
-      const id = Number(del.closest<HTMLElement>('[data-id]')!.dataset.id);
-      return arm(del, '¿Borrar?', () => void guard(() => deleteClips([id]), 'Frase borrada.'));
+      const ids = idsOf(del);
+      return arm(del, '¿Borrar?', () => void guard(() => deleteClips(ids), ids.length === 1 ? 'Ejemplo borrado.' : 'Frase borrada.'));
     }
   });
 
@@ -269,8 +283,7 @@ export function openDevPanel() {
   dlg.addEventListener('change', (e) => {
     const sel = (e.target as HTMLElement).closest<HTMLSelectElement>('[data-move]');
     if (!sel) return;
-    const id = Number(sel.closest<HTMLElement>('[data-id]')!.dataset.id);
-    void guard(() => moveClips([id], sel.value), `Movida a «${sel.value}».`);
+    void guard(() => moveClips(idsOf(sel), sel.value), `Movida a «${sel.value}».`);
   });
 
   q<HTMLInputElement>('#dev-q').addEventListener('input', (e) => {
