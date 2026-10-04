@@ -1,8 +1,9 @@
 import { engine } from '../../core/engine';
 import type { LipSequence } from '../../core/types';
+import { FEATURE_DIMS } from '../../core/vision/lip-features';
 import { processVideoFile } from '../../core/vision/video-processor';
 import { transcribeVideoAudio } from '../../core/vision/transcriber';
-import { segmentClips } from '../../core/vision/segmenter';
+import { segmentByMotion, segmentClips } from '../../core/vision/segmenter';
 import type { VideoClip } from '../../core/vision/segmenter';
 import { DEFAULT_FOLDER, insertClips, listFolders } from '../../core/supabase';
 import { esc } from '../dom';
@@ -21,6 +22,7 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
   } catch {
     /* el selector funciona con la carpeta por defecto */
   }
+  folders = Array.from(new Set([DEFAULT_FOLDER, ...folders]));
   if (!folders.includes(startFolder)) startFolder = DEFAULT_FOLDER;
 
   dlg.innerHTML = `
@@ -41,10 +43,11 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
       <button class="btn btn--primary btn--lg" id="imp-pick" type="button">${icon('upload', 20)}<span>Elegir video (40 a 60 s)</span></button>
 
       <div id="imp-progress" class="dev-progress" hidden>
-        <progress></progress>
-        <p id="imp-status">Preparando…</p>
+        <progress id="imp-bar" max="100"></progress>
+        <p id="imp-status" aria-live="polite">Preparando…</p>
       </div>
 
+      <p id="imp-err" class="dev-note dev-note--err" role="alert" hidden></p>
       <div id="imp-result" hidden></div>
     </div>`;
 
@@ -53,11 +56,20 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
   const pickBtn = q<HTMLButtonElement>('#imp-pick');
   const progress = q<HTMLDivElement>('#imp-progress');
   const status = q<HTMLParagraphElement>('#imp-status');
+  const bar = q<HTMLProgressElement>('#imp-bar');
+  const errBox = q<HTMLParagraphElement>('#imp-err');
   const result = q<HTMLDivElement>('#imp-result');
   const folderSel = q<HTMLSelectElement>('#imp-folder');
 
   let clips: VideoClip[] = [];
   let sourceName = '';
+  let note = '';
+
+  const say = (msg: string, pct?: number) => {
+    status.textContent = pct === undefined ? msg : `${msg} ${pct}%`;
+    if (pct === undefined) bar.removeAttribute('value');
+    else bar.value = pct;
+  };
 
   const close = () => {
     dlg.close();
@@ -73,30 +85,46 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
     sourceName = file.name;
     pickBtn.hidden = true;
     progress.hidden = false;
+    result.hidden = true;
+    errBox.hidden = true;
     try {
-      status.textContent = 'Leyendo labios del video…';
-      const frames = await processVideoFile(file);
-      status.textContent = 'Separando frases…';
-      const segments = await transcribeVideoAudio(file);
-      clips = segmentClips(frames, segments);
+      say('Leyendo los labios del video…', 0);
+      const video = await processVideoFile(file, (pct) => say('Leyendo los labios del video…', pct));
+      if (video.frames.length < video.scanned * 0.2) {
+        throw new Error('No se vio una cara en la mayor parte del video. Graba de frente, con buena luz y la cara completa.');
+      }
+
+      let segments: Awaited<ReturnType<typeof transcribeVideoAudio>> = [];
+      note = '';
+      try {
+        segments = await transcribeVideoAudio(file, say);
+      } catch (err) {
+        console.warn('Transcripción no disponible:', err);
+        note = 'No pude transcribir el audio (¿sin internet?). Separé el video por pausas: escribe tú cada frase.';
+      }
+      say('Armando los fragmentos…');
+      clips = segments.length ? segmentClips(video.frames, segments) : segmentByMotion(video.frames);
+      if (!segments.length && !note) note = 'El video no tiene audio claro. Separé por pausas: escribe tú cada frase.';
       progress.hidden = true;
       renderClips();
     } catch (err) {
-      toast(`No se pudo procesar: ${(err as Error).message}`, { tone: 'warn' });
+      errBox.textContent = (err as Error).message;
+      errBox.hidden = false;
       progress.hidden = true;
       pickBtn.hidden = false;
+      fileInput.value = '';
     }
   });
 
   const renderClips = () => {
     result.hidden = false;
     if (!clips.length) {
-      result.innerHTML = `<p class="dev-note">No se encontraron labios en el video. Prueba con mejor luz y de frente.</p>`;
+      result.innerHTML = `<p class="dev-note">${icon('info', 16)}<span>No encontré frases con movimiento de labios. Prueba con otro video.</span></p>`;
       pickBtn.hidden = false;
       return;
     }
     result.innerHTML = `
-      <p class="dev-note">${icon('info', 16)}<span>La transcripción automática todavía no está activa. Escribe la frase real de cada fragmento antes de guardar.</span></p>
+      <p class="dev-note">${icon('info', 16)}<span>${esc(note || 'Revisa que cada frase esté bien escrita antes de guardar.')}</span></p>
       <ul class="dev-clips">
         ${clips
           .map(
@@ -104,7 +132,7 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
           <li class="dev-clip" data-i="${i}">
             <div class="dev-clip__main">
               <input class="input" type="text" value="${esc(c.text)}" aria-label="Frase del fragmento ${i + 1}" data-text>
-              <p class="dev-meta">${((c.endTime - c.startTime) / 1000).toFixed(1)} s · ${c.lipPoints.length} cuadros</p>
+              <p class="dev-meta">${((c.endMs - c.startMs) / 1000).toFixed(1)} s · ${c.frames.length} cuadros</p>
             </div>
             <button class="icon-btn" type="button" data-skip aria-label="Quitar este fragmento">${icon('trash', 18)}</button>
           </li>`,
@@ -130,18 +158,18 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
     btn.disabled = true;
     try {
       await insertClips(
-        ready.map((c) => ({
-          text: c.text,
-          start_time: c.startTime,
-          end_time: c.endTime,
-          frame_count: c.lipPoints.length,
-          folder: folderSel.value,
-          source_name: sourceName,
-          lip_points: c.lipPoints.map((f) => ({
-            t: f.timestamp,
-            p: f.lipPoints.map((p) => [round(p.x), round(p.y), round(p.z)]),
-          })),
-        })),
+        ready.map((c) => {
+          const seq = toLipSequence(c);
+          return {
+            text: c.text,
+            start_time: c.startMs,
+            end_time: c.endMs,
+            frame_count: c.frames.length,
+            folder: folderSel.value,
+            source_name: sourceName,
+            lip_points: { dims: seq.dims, fps: round(seq.fps), frames: Array.from(seq.frames, round) },
+          };
+        }),
       );
       await addToEngine(ready);
       toast(`${ready.length} fragmento(s) guardados en «${folderSel.value}».`, { tone: 'ok' });
@@ -171,9 +199,11 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
 
 async function addToEngine(clips: VideoClip[]) {
   for (const clip of clips) {
-    const phrase = engine.phrases.find((p) => p.text.toLowerCase() === clip.text.toLowerCase());
-    if (!phrase) continue;
     try {
+      const wanted = clip.text.trim().toLowerCase();
+      const phrase =
+        engine.phrases.find((p) => p.text.trim().toLowerCase() === wanted) ??
+        (await engine.savePhrase({ text: clip.text.trim(), icon: 'sparkles', category: 'necesidad' }));
       await engine.addSample(phrase.id, toLipSequence(clip), 'grabacion');
     } catch (err) {
       console.error('No se pudo añadir al motor:', err);
@@ -182,10 +212,8 @@ async function addToEngine(clips: VideoClip[]) {
 }
 
 function toLipSequence(clip: VideoClip): LipSequence {
-  const all = clip.lipPoints.flatMap((frame) => frame.lipPoints.flatMap((p) => [p.x, p.y, p.z]));
-  return {
-    dims: (clip.lipPoints[0]?.lipPoints.length ?? 21) * 3,
-    frames: new Float32Array(all),
-    fps: 25,
-  };
+  const flat = new Float32Array(clip.frames.length * FEATURE_DIMS);
+  clip.frames.forEach((f, i) => flat.set(f.features, i * FEATURE_DIMS));
+  const seconds = Math.max((clip.endMs - clip.startMs) / 1000, 0.1);
+  return { dims: FEATURE_DIMS, frames: flat, fps: clip.frames.length / seconds };
 }

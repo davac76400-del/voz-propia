@@ -4,7 +4,7 @@ import { defineConfig, type Plugin } from 'vite';
 
 // Archivos que no se precargan: se guardan en caché la primera vez que se usan.
 // También los alfabetos de las tipografías que la app no usa (cirílico, griego, vietnamita).
-const LAZY = [/nosimd/, /ort[-.].*\.(wasm|m?js)$/, /\.onnx$/, /-(cyrillic|cyrillic-ext|greek|greek-ext|vietnamese|hebrew)-/];
+const LAZY = [/nosimd/, /transformers/, /ort[-.].*\.(wasm|m?js)$/, /\.onnx$/, /-(cyrillic|cyrillic-ext|greek|greek-ext|vietnamese|hebrew)-/];
 
 async function walk(dir: string): Promise<string[]> {
   const out: string[] = [];

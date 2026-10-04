@@ -349,6 +349,15 @@
   font-weight: 600;
 }
 
+.dev-note--err {
+  background: var(--danger-soft);
+}
+
+.dev-note--err:not([hidden]) {
+  display: block;
+  color: var(--danger);
+}
+
 .dev-note .ic {
   flex: none;
   margin-top: 2px;
@@ -395,4 +404,8 @@
   .dev-live i {
     animation: none;
   }
+}
+
+.dev [hidden] {
+  display: none !important;
 }

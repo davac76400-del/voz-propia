@@ -26,5 +26,13 @@ export function toast(message: string, opts: ToastOptions = {}) {
     close();
   });
   host.append(el);
+  try {
+    // Sobre las ventanas modales (que viven en la capa superior del navegador) para que el aviso se vea.
+    host.setAttribute('popover', 'manual');
+    if (host.matches(':popover-open')) host.hidePopover();
+    host.showPopover();
+  } catch {
+    /* navegador sin Popover: queda con su z-index normal */
+  }
   setTimeout(close, opts.ms ?? (opts.action ? 9000 : 3200));
 }
