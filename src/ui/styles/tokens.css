@@ -1,0 +1,162 @@
+:root {
+  /* Paleta de las páginas oscuras (guía y ayuda). Se cambia desde el selector de colores. */
+  --t-ink: #05080a;
+  --t-ink-rgb: 5 8 10;
+  --t-card: #0a0f14;
+  --t-card-rgb: 10 15 20;
+  --t-a1: #2f69ff;
+  --t-a1-rgb: 47 105 255;
+  --t-a1m: #5d80ff;
+  --t-a1l: #9db7ff;
+  --t-a1l-rgb: 157 183 255;
+  --t-a1d: #0e2ac5;
+  --t-a1d-rgb: 14 42 197;
+  --t-a2: #3df2a0;
+  --t-a2-rgb: 61 242 160;
+  --t-on-a1: #ffffff;
+
+  --font-display: 'Raleway Variable', 'Raleway', system-ui, sans-serif;
+  --font-body: 'Atkinson Hyperlegible Next Variable', 'Atkinson Hyperlegible', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace;
+
+  --fs-xs: 0.875rem;
+  --fs-sm: 0.9375rem;
+  --fs-md: 1.0625rem;
+  --fs-lg: 1.25rem;
+  --fs-xl: 1.625rem;
+  --fs-2xl: clamp(2rem, 1.2rem + 3vw, 3.3rem);
+  --fs-3xl: clamp(2.4rem, 1.4rem + 4vw, 4.2rem);
+
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 22px;
+  --r-xl: 28px;
+  --r-pill: 999px;
+
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-1: 140ms;
+  --dur-2: 220ms;
+  --dur-3: 320ms;
+
+  --z-dock: 20;
+  --z-sticky: 30;
+  --z-overlay: 60;
+  --z-modal: 80;
+  --z-toast: 100;
+
+  --dock-h: 78px;
+  --max-w: 1200px;
+
+  /* Un color por grupo de frases: se distinguen sin leer. */
+  --cat-necesidad: #2f69ff;
+  --cat-cuerpo: #ff4d6d;
+  --cat-emocion: #8b5cf6;
+  --cat-social: #ff9418;
+  --cat-respuesta: #12b57d;
+
+  /* ===== Modo usuario: negro, azul cobalto, verde y blanco ===== */
+  color-scheme: light;
+  --bg: var(--t-ink);
+  --ink: #0a0f14;
+  --ink-2: #26303a;
+  --muted: #4a5663;
+  --line: rgb(10 15 20 / 0.12);
+  --line-strong: rgb(10 15 20 / 0.24);
+  --surface: rgb(255 255 255 / 0.62);
+  --surface-2: rgb(255 255 255 / 0.88);
+  --surface-solid: #ffffff;
+  --surface-border: rgb(255 255 255 / 0.85);
+  --surface-hilite: inset 0 1.5px 2px rgb(255 255 255 / 0.9);
+  --shadow-card: 0 18px 44px -22px rgb(14 42 197 / 0.3);
+  --shadow-float: 0 26px 60px -22px rgb(14 42 197 / 0.4);
+  --accent: #2f69ff;
+  --accent-deep: #0e2ac5;
+  --accent-ink: #ffffff;
+  --accent-soft: #e2e9ff;
+  --accent-text: #0e2ac5;
+  --orb: radial-gradient(circle at 50% 30%, #5d80ff 0%, #0e2ac5 55%, #020b40 100%);
+  --orb-glow: rgb(47 105 255 / 0.55);
+  --btn-primary: linear-gradient(180deg, #5d80ff 0%, #2f69ff 50%, #0e2ac5 100%);
+  --btn-primary-shadow: 0 12px 28px -10px rgb(47 105 255 / 0.7), inset 0 1px 0 rgb(255 255 255 / 0.4);
+  --ok: #0b8a57;
+  --ok-soft: #d6f6e7;
+  --warn: #935600;
+  --warn-soft: #fff0c4;
+  --danger: #cc1c46;
+  --danger-soft: #ffe0e7;
+  --stage-accent: #9db7ff;
+  --stage-glow: rgb(226 233 255 / 0.95);
+  --stage-fill: rgb(47 105 255 / 0.22);
+  --focus: #2f69ff;
+  --toast-bg: #0a0f14;
+  --toast-ink: #ffffff;
+  --dialog-bg: linear-gradient(180deg, #ffffff 0%, #eef2ff 100%);
+  --input-bg: #ffffff;
+  --track: rgb(10 15 20 / 0.12);
+}
+
+[data-mode='inicio'] {
+  --bg: #ecefff;
+  --orb: radial-gradient(circle at 50% 30%, #5d80ff 0%, #0e2ac5 55%, #020b40 100%);
+  --orb-glow: rgb(47 105 255 / 0.55);
+  --ink: #0b1030;
+  --accent: #2f69ff;
+  --accent-text: #0e2ac5;
+  --accent-soft: #e2e9ff;
+}
+
+/* ===== Modo programador: centro de control nocturno con acento menta ===== */
+[data-mode='programador'] {
+  color-scheme: dark;
+  --bg: #04060f;
+  --ink: #f3f6ff;
+  --ink-2: #cdd5ec;
+  --muted: #9ea9c6;
+  --line: rgb(150 175 230 / 0.12);
+  --line-strong: rgb(150 175 230 / 0.24);
+  --surface: rgb(12 18 38 / 0.62);
+  --surface-2: rgb(18 27 54 / 0.82);
+  --surface-solid: #0b1124;
+  --surface-border: rgb(150 175 230 / 0.14);
+  --surface-hilite: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --shadow-card: 0 30px 80px -34px rgb(0 0 0 / 0.8);
+  --shadow-float: 0 30px 80px -24px rgb(0 0 0 / 0.9);
+  --accent: #5df0a8;
+  --accent-2: #ff8aa0;
+  --accent-3: #ffd27a;
+  --accent-4: #b79cff;
+  --accent-5: #7cc7ff;
+  --accent-deep: #2fd38a;
+  --accent-ink: #032018;
+  --accent-soft: rgb(93 240 168 / 0.1);
+  --accent-text: #5df0a8;
+  --orb: radial-gradient(circle at 50% 30%, #c9ffe3 0%, #5df0a8 42%, #11834f 100%);
+  --orb-glow: rgb(93 240 168 / 0.45);
+  --btn-primary: linear-gradient(180deg, #7cf6ba 0%, #5df0a8 45%, #2fd38a 100%);
+  --btn-primary-shadow: 0 10px 30px -8px rgb(93 240 168 / 0.5), inset 0 1px 0 rgb(255 255 255 / 0.4);
+  --ok: #5df0a8;
+  --ok-soft: rgb(93 240 168 / 0.12);
+  --warn: #ffd27a;
+  --warn-soft: rgb(255 210 122 / 0.12);
+  --danger: #ff6b8b;
+  --danger-soft: rgb(255 107 139 / 0.12);
+  --stage-accent: #5df0a8;
+  --stage-glow: rgb(193 250 255 / 0.9);
+  --stage-fill: rgb(93 240 168 / 0.16);
+  --focus: #5df0a8;
+  --toast-bg: #131c38;
+  --toast-ink: #f3f6ff;
+  --dialog-bg: radial-gradient(120% 80% at 100% 0%, rgb(93 240 168 / 0.08), transparent 55%), #0b1124;
+  --input-bg: rgb(255 255 255 / 0.04);
+  --track: rgb(255 255 255 / 0.08);
+}

@@ -1,0 +1,18 @@
+# Llaves de acceso — NUNCA se suben
+.env
+.env.local
+.env.*.local
+
+frontend/node_modules/
+frontend/salida.css
+frontend/_revision.js
+
+node_modules/
+.netlify/
+.vercel/
+
+__pycache__/
+*.pyc
+
+# pruebas: playwright se instala aparte, no se versiona
+pruebas/node_modules/
