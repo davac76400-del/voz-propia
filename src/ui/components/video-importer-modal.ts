@@ -17,10 +17,11 @@ const MIN_FRAMES = 8;
 interface ImportClip extends VideoClip {
   source: string;
   fromName: boolean;
+  lipsOnly: boolean;
 }
 
 const FRAMING_TIP =
-  'Que se vea la boca con la nariz y la barbilla (la boca no debe ocupar más de la mitad del ancho). Si recortas solo los labios, el detector no los encuentra.';
+  'Sirve la cara completa o solo los labios recortados. Si son solo labios, que la boca ocupe casi todo el cuadro, de frente y con buena luz.';
 
 export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
   const dlg = document.createElement('dialog');
@@ -54,7 +55,7 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
 
       <div class="dev-help">
         <p><b>Nombre del archivo:</b> <code>voz-frase.mp4</code>. La frase es lo que va después del guion. Ejemplo: <code>voz-me.mp4</code> guarda «Me» y <code>voz-tengo-sed.mp4</code> guarda «Tengo sed».</p>
-        <p><b>Qué debe verse:</b> ${esc(FRAMING_TIP)}</p>
+        <p><b>Qué debe verse:</b> ${esc(FRAMING_TIP)} Con solo labios la lectura es experimental: la cara completa da mejores resultados.</p>
       </div>
 
       <div id="imp-progress" class="dev-progress" hidden>
@@ -99,13 +100,13 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
     say(`${label} · leyendo los labios…`, 0);
     const video = await processVideoFile(file, (pct) => say(`${label} · leyendo los labios…`, pct));
     if (video.frames.length < Math.max(MIN_FRAMES, video.scanned * 0.2)) {
-      throw new Error(`No pude ubicar los labios. ${FRAMING_TIP}`);
+      throw new Error(`No pude leer los labios de este video. ${FRAMING_TIP}`);
     }
 
     if (phrase) {
       const first = video.frames[0];
       const last = video.frames[video.frames.length - 1];
-      return [{ id: 'clip-0', text: phrase, startMs: first.t, endMs: last.t, frames: video.frames, source: file.name, fromName: true }];
+      return [{ id: 'clip-0', text: phrase, startMs: first.t, endMs: last.t, frames: video.frames, source: file.name, fromName: true, lipsOnly: video.mode === 'labios' }];
     }
 
     let segments: Awaited<ReturnType<typeof transcribeVideoAudio>> = [];
@@ -118,7 +119,7 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
     say(`${label} · armando los fragmentos…`);
     const found = segments.length ? segmentClips(video.frames, segments) : segmentByMotion(video.frames);
     if (!segments.length && !note) note = 'Hay videos sin nombre «voz-frase» y sin audio claro. Los separé por pausas: escribe tú esas frases.';
-    return found.map((c) => ({ ...c, source: file.name, fromName: false }));
+    return found.map((c) => ({ ...c, source: file.name, fromName: false, lipsOnly: video.mode === 'labios' }));
   };
 
   fileInput.addEventListener('change', async () => {
@@ -159,6 +160,7 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
     result.hidden = false;
     result.innerHTML = `
       ${note ? `<p class="dev-note">${icon('info', 16)}<span>${esc(note)}</span></p>` : ''}
+      ${clips.some((c) => c.lipsOnly) ? `<p class="dev-note">${icon('info', 16)}<span>${esc('Los videos marcados «solo labios» se leyeron en modo experimental.')}</span></p>` : ''}
       <ul class="dev-clips">
         ${clips
           .map(
@@ -166,7 +168,7 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
           <li class="dev-clip" data-i="${i}">
             <div class="dev-clip__main">
               <input class="input" type="text" value="${esc(c.text)}" aria-label="Frase de ${esc(c.source)}" data-text>
-              <p class="dev-meta">${esc(c.source)} · ${((c.endMs - c.startMs) / 1000).toFixed(1)} s · ${c.frames.length} cuadros</p>
+              <p class="dev-meta">${esc(c.source)} · ${((c.endMs - c.startMs) / 1000).toFixed(1)} s · ${c.frames.length} cuadros${c.lipsOnly ? ' · solo labios' : ''}</p>
             </div>
             <button class="icon-btn" type="button" data-skip aria-label="Quitar este fragmento">${icon('trash', 18)}</button>
           </li>`,
