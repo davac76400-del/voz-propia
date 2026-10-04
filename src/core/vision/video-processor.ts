@@ -28,8 +28,10 @@ async function createLandmarker(): Promise<FaceLandmarker> {
       runningMode: 'VIDEO',
       numFaces: 1,
       outputFaceBlendshapes: true,
-      minFaceDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
+      // Más permisivo que en vivo: los videos recortados (nariz y barbilla) solo se detectan así.
+      minFaceDetectionConfidence: 0.1,
+      minFacePresenceConfidence: 0.1,
+      minTrackingConfidence: 0.1,
     });
   try {
     return await make('GPU');
