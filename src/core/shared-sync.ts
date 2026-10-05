@@ -43,9 +43,13 @@ const median = (v: number[]) => [...v].sort((a, b) => a - b)[Math.floor(v.length
  */
 export async function publishPhrase(text: string): Promise<void> {
   const key = keyOf(text);
-  const { data, error } = await supabase.from('programmer_videos').select('lip_points').ilike('text', escapeLike(text.trim()));
+  const { data, error } = await supabase.from('programmer_videos').select('lip_points,folder').ilike('text', escapeLike(text.trim()));
   if (error) throw new Error(error.message);
-  const rows = (data ?? []).map((r) => r.lip_points as RemoteSeq).filter((r) => r?.frames?.length);
+  const all = (data ?? []).filter((r) => (r.lip_points as RemoteSeq)?.frames?.length);
+  const rows = all.map((r) => r.lip_points as RemoteSeq);
+  const counts = new Map<string, number>();
+  for (const r of all) counts.set(r.folder as string, (counts.get(r.folder as string) ?? 0) + 1);
+  const folder = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'Sin carpeta';
 
   if (!rows.length) {
     const del = await supabase.from('shared_phrases').delete().eq('text_key', key);
@@ -68,7 +72,7 @@ export async function publishPhrase(text: string): Promise<void> {
 
   const { error: up } = await supabase
     .from('shared_phrases')
-    .upsert({ text_key: key, text: text.trim(), samples: chosen, updated_at: new Date().toISOString() }, { onConflict: 'text_key' });
+    .upsert({ text_key: key, text: text.trim(), folder, samples: chosen, updated_at: new Date().toISOString() }, { onConflict: 'text_key' });
   if (up) throw new Error(up.message);
 }
 
@@ -97,7 +101,7 @@ export function syncShared(): Promise<void> {
 }
 
 async function syncOnce() {
-  const { data, error } = await supabase.from('shared_phrases').select('text_key,text,updated_at');
+  const { data, error } = await supabase.from('shared_phrases').select('text_key,text,folder,updated_at');
   if (error) throw new Error(error.message);
   const remote = data ?? [];
   // Si el navegador borró los ejemplos locales pero recuerda versiones, se vuelve a descargar todo.
@@ -109,12 +113,12 @@ async function syncOnce() {
   const removed = Object.keys(known).filter((k) => !remoteKeys.has(k));
   if (!changed.length && !removed.length) return;
 
-  const items: { key: string; text: string; seqs: LipSequence[] }[] = [];
+  const items: { key: string; text: string; folder: string; seqs: LipSequence[] }[] = [];
   for (const r of changed) {
     const { data: full, error: e2 } = await supabase.from('shared_phrases').select('samples').eq('text_key', r.text_key).single();
     if (e2) throw new Error(e2.message);
     const seqs = ((full?.samples ?? []) as RemoteSeq[]).filter((s) => s?.frames?.length).map(toSeq);
-    items.push({ key: r.text_key as string, text: r.text as string, seqs });
+    items.push({ key: r.text_key as string, text: r.text as string, folder: (r.folder as string) || 'Sin carpeta', seqs });
   }
 
   await engine.applyShared(items, removed);

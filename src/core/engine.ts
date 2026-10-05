@@ -146,16 +146,17 @@ class Engine {
    * Pone en este dispositivo las frases y ejemplos que el programador publicó.
    * Los ejemplos compartidos se reemplazan por completo; los que grabó la persona no se tocan.
    */
-  async applyShared(items: { key: string; text: string; seqs: LipSequence[] }[], removedKeys: string[]) {
+  async applyShared(items: { key: string; text: string; folder: string; seqs: LipSequence[] }[], removedKeys: string[]) {
     const dropShared = async (key: string) => {
       const prefix = `${SHARED_PREFIX}${key}:`;
       for (const s of this.samples.filter((x) => x.id.startsWith(prefix))) await db.deleteSample(s.id);
       this.samples = this.samples.filter((x) => !x.id.startsWith(prefix));
     };
     for (const it of items) {
-      const phrase =
+      let phrase =
         this.phrases.find((p) => p.text.trim().toLowerCase() === it.key) ??
-        (await this.savePhrase({ text: it.text, icon: 'sparkles', category: 'necesidad' }));
+        (await this.savePhrase({ text: it.text, icon: 'sparkles', category: 'necesidad', folder: it.folder }));
+      if (phrase.folder !== it.folder) phrase = await this.savePhrase({ ...phrase, folder: it.folder });
       await dropShared(it.key);
       const now = Date.now();
       for (const [i, seq] of it.seqs.entries()) {

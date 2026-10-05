@@ -7,6 +7,8 @@ export interface Phrase {
   category: Category;
   order: number;
   audioId?: string;
+  /** Carpeta que el programador le puso; las frases propias no la tienen. */
+  folder?: string;
   createdAt: number;
 }
 

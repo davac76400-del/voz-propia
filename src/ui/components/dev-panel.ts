@@ -5,7 +5,10 @@ import {
   deleteFolder,
   listClips,
   listFolders,
+  mergeClips,
   moveClips,
+  restoreClips,
+  unmergeClips,
   watchDevData,
   type DevClip,
 } from '../../core/supabase';
@@ -18,32 +21,53 @@ import { toast } from './toast';
 
 const ALL = '__all';
 
-interface Group {
+interface Item {
   key: string;
-  name: string;
-  date: string;
+  text: string;
   folder: string;
   clips: DevClip[];
+  sources: { name: string; n: number }[];
+  /** Nombres con los que se fusionó (para poder desfusionar). */
+  merged: string[];
+  latest: string;
 }
 
-const idsOf = (el: HTMLElement) => el.closest<HTMLElement>('[data-phrase-ids]')!.dataset.phraseIds!.split(',').map(Number);
+const keyOf = (t: string) => t.trim().toLowerCase();
 
-/** Los ejemplos de la misma frase dentro de un video se muestran juntos. */
-function phraseRows(clips: DevClip[]) {
-  const map = new Map<string, DevClip[]>();
-  for (const c of [...clips].sort((a, b) => a.start_time - b.start_time)) {
-    const key = c.text.trim().toLowerCase();
-    (map.get(key) ?? map.set(key, []).get(key)!).push(c);
+function majority(values: string[]) {
+  const m = new Map<string, number>();
+  for (const v of values) m.set(v, (m.get(v) ?? 0) + 1);
+  return [...m].sort((a, b) => b[1] - a[1])[0]?.[0] ?? DEFAULT_FOLDER;
+}
+
+/** Una tarjeta por palabra: los videos y personas que dijeron lo mismo se juntan solos. */
+function buildItems(clips: DevClip[], folder: string, term: string): Item[] {
+  const map = new Map<string, Item>();
+  for (const c of clips) {
+    if (folder !== ALL && c.folder !== folder) continue;
+    const key = keyOf(c.text);
+    const it = map.get(key) ?? map.set(key, { key, text: c.text.trim(), folder: c.folder, clips: [], sources: [], merged: [], latest: c.created_at }).get(key)!;
+    it.clips.push(c);
+    if (c.created_at > it.latest) it.latest = c.created_at;
   }
-  return [...map.values()].map((list) => ({
-    text: list[0].text,
-    clips: list,
-    avgMs: list.reduce((n, c) => n + (c.end_time - c.start_time), 0) / list.length,
-  }));
+  const out: Item[] = [];
+  for (const it of map.values()) {
+    const src = new Map<string, number>();
+    for (const c of it.clips) {
+      const name = c.source_name || 'Video sin nombre';
+      src.set(name, (src.get(name) ?? 0) + 1);
+    }
+    it.sources = [...src].map(([name, n]) => ({ name, n }));
+    it.merged = [...new Set(it.clips.filter((c) => c.orig_text && keyOf(c.orig_text) !== it.key).map((c) => c.orig_text!))];
+    it.folder = majority(it.clips.map((c) => c.folder));
+    if (term) {
+      const hay = [it.text, ...it.merged, ...it.sources.map((x) => x.name)].join(' ').toLowerCase();
+      if (!hay.includes(term)) continue;
+    }
+    out.push(it);
+  }
+  return out.sort((a, b) => b.latest.localeCompare(a.latest));
 }
-
-const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 export function openDevPanel() {
   const dlg = document.createElement('dialog');
@@ -53,7 +77,7 @@ export function openDevPanel() {
       <header class="sheet__head">
         <div>
           <p class="kicker">[ Programador ]</p>
-          <h2>Mis videos</h2>
+          <h2>Mis palabras</h2>
         </div>
         <span class="dev-live" id="dev-live" title="Conectado en tiempo real"><i></i>En vivo</span>
         <button class="icon-btn" type="button" data-close aria-label="Cerrar">${icon('x', 20)}</button>
@@ -62,7 +86,7 @@ export function openDevPanel() {
       <div class="dev-bar">
         <label class="dev-search">
           ${icon('search', 18)}
-          <input class="input" id="dev-q" type="search" placeholder="Buscar una frase o un video" autocomplete="off">
+          <input class="input" id="dev-q" type="search" placeholder="Buscar una palabra o un video" autocomplete="off">
         </label>
         <button class="btn btn--soft" id="dev-eval" type="button">${icon('gauge', 18)}<span>Probar precisión</span></button>
         <button class="btn btn--primary" id="dev-import" type="button">${icon('upload', 18)}<span>Importar video</span></button>
@@ -81,6 +105,7 @@ export function openDevPanel() {
   let loaded = false;
   let failed = '';
   let creating = false;
+  let menu: { key: string; mode: 'main' | 'merge' } | null = null;
 
   const q = <T extends HTMLElement>(sel: string) => dlg.querySelector<T>(sel)!;
   const foldersEl = q<HTMLElement>('#dev-folders');
@@ -100,7 +125,8 @@ export function openDevPanel() {
     render();
   };
 
-  const countIn = (f: string) => (f === ALL ? clips.length : clips.filter((c) => c.folder === f).length);
+  const countIn = (f: string) => new Set(clips.filter((c) => f === ALL || c.folder === f).map((c) => keyOf(c.text))).size;
+  const clipsOf = (key: string) => clips.filter((c) => keyOf(c.text) === key);
 
   const renderFolders = () => {
     const names = Array.from(new Set([DEFAULT_FOLDER, ...folders, ...clips.map((c) => c.folder)]));
@@ -114,7 +140,7 @@ export function openDevPanel() {
       </div>`;
     foldersEl.innerHTML = `
       <p class="dev-h">Carpetas</p>
-      ${item(ALL, 'Todos los videos', 'layout-grid')}
+      ${item(ALL, 'Todas las palabras', 'layout-grid')}
       ${names.map((n) => item(n, n, 'folder')).join('')}
       ${
         creating
@@ -124,75 +150,66 @@ export function openDevPanel() {
     foldersEl.querySelector<HTMLInputElement>('input[name="n"]')?.focus();
   };
 
-  const visibleGroups = (): Group[] => {
-    const term = query.trim().toLowerCase();
-    const map = new Map<string, Group>();
-    for (const c of clips) {
-      if (active !== ALL && c.folder !== active) continue;
-      if (term && !c.text.toLowerCase().includes(term) && !(c.source_name ?? '').toLowerCase().includes(term)) continue;
-      const key = `${c.source_name ?? ''}|${c.created_at.slice(0, 15)}|${c.folder}`;
-      let g = map.get(key);
-      if (!g) {
-        g = { key, name: c.source_name || 'Video sin nombre', date: c.created_at, folder: c.folder, clips: [] };
-        map.set(key, g);
-      }
-      g.clips.push(c);
+  const folderOpts = (sel: string) =>
+    Array.from(new Set([DEFAULT_FOLDER, ...folders]))
+      .map((f) => `<option value="${esc(f)}"${f === sel ? ' selected' : ''}>${esc(f)}</option>`)
+      .join('');
+
+  const renderMenu = (it: Item, all: Item[]) => {
+    if (!menu || menu.key !== it.key) return '';
+    if (menu.mode === 'merge') {
+      const others = all.filter((o) => o.key !== it.key);
+      return `<div class="dev-menu" role="menu" data-menu-box>
+        <p class="dev-menu__h">Fusionar «${esc(it.text)}» con:</p>
+        ${others.length ? others.map((o) => `<button class="dev-menu__item" role="menuitem" type="button" data-merge-into="${esc(o.key)}">${icon('layout-grid', 16)}<span>${esc(o.text)}</span></button>`).join('') : `<p class="dev-meta dev-menu__empty">No hay otra palabra con la cual fusionar.</p>`}
+        <button class="dev-menu__item dev-menu__back" role="menuitem" type="button" data-menu-back>${icon('arrow-left', 16)}<span>Volver</span></button>
+      </div>`;
     }
-    return [...map.values()].sort((a, b) => b.date.localeCompare(a.date));
+    return `<div class="dev-menu" role="menu" data-menu-box>
+      <button class="dev-menu__item" role="menuitem" type="button" data-act="merge">${icon('plus', 16)}<span>Fusionar con otra palabra…</span></button>
+      ${it.merged.length ? `<button class="dev-menu__item" role="menuitem" type="button" data-act="unmerge">${icon('undo', 16)}<span>Desfusionar</span></button>` : ''}
+      <button class="dev-menu__item dev-menu__item--danger" role="menuitem" type="button" data-act="delete">${icon('trash', 16)}<span>Eliminar</span></button>
+    </div>`;
   };
 
   const renderMain = () => {
     if (!loaded) {
-      mainEl.innerHTML = `<p class="dev-empty">Cargando tus videos…</p>`;
+      mainEl.innerHTML = `<p class="dev-empty">Cargando tus palabras…</p>`;
       return;
     }
     if (failed) {
       mainEl.innerHTML = `<div class="dev-empty">${icon('wifi-off', 28)}<p>No se pudo conectar con la base de datos.</p><p class="dev-meta">${esc(failed)}</p><button class="btn btn--soft" data-retry type="button">Reintentar</button></div>`;
       return;
     }
-    const groups = visibleGroups();
-    const title = active === ALL ? 'Todos los videos' : active;
-    const total = groups.reduce((n, g) => n + g.clips.length, 0);
-    const head = `<div class="dev-main__head"><h3>${esc(title)}</h3><p class="dev-meta">${groups.length} video(s) · ${total} frase(s)</p></div>`;
-    if (!groups.length) {
+    const items = buildItems(clips, active, query.trim().toLowerCase());
+    const everything = buildItems(clips, ALL, '');
+    const title = active === ALL ? 'Todas las palabras' : active;
+    const total = items.reduce((n, it) => n + it.clips.length, 0);
+    const head = `<div class="dev-main__head"><h3>${esc(title)}</h3><p class="dev-meta">${items.length} palabra(s) · ${total} ejemplo(s)</p></div>`;
+    if (!items.length) {
       mainEl.innerHTML = `${head}<div class="dev-empty">${icon('folder', 28)}<p>${
         query ? 'Nada coincide con tu búsqueda.' : 'Esta carpeta está vacía.'
       }</p>${query ? '' : `<button class="btn btn--primary" data-import type="button">${icon('upload', 18)}<span>Importar un video</span></button>`}</div>`;
       return;
     }
-    const folderOpts = (sel: string) =>
-      Array.from(new Set([DEFAULT_FOLDER, ...folders]))
-        .map((f) => `<option value="${esc(f)}"${f === sel ? ' selected' : ''}>${esc(f)}</option>`)
-        .join('');
     mainEl.innerHTML =
       head +
-      groups
+      `<p class="dev-meta dev-tip">Arrastra una palabra sobre otra para fusionarlas. Con los tres puntos puedes desfusionar o eliminar.</p>` +
+      items
         .map(
-          (g) => `
-      <article class="dev-group" data-ids="${g.clips.map((c) => c.id).join(',')}">
-        <header class="dev-group__head">
-          <span class="dev-group__ic">${icon('play', 18)}</span>
-          <div class="dev-group__title">
-            <h4>${esc(g.name)}</h4>
-            <p class="dev-meta">${phraseRows(g.clips).length} frase(s) · ${g.clips.length} ejemplo(s) · ${fmtDate(g.date)}${active === ALL ? ` · ${esc(g.folder)}` : ''}</p>
-          </div>
-          <button class="btn btn--ghost btn--sm" type="button" data-del-group>${icon('trash', 16)}<span>Borrar video</span></button>
-        </header>
-        <ul class="dev-phrases">
-          ${phraseRows(g.clips)
-            .map(
-              (row) => `
-            <li class="dev-phrase" data-phrase-ids="${row.clips.map((c) => c.id).join(',')}">
-              <div class="dev-phrase__body">
-                <p class="dev-phrase__text">${esc(row.text)}</p>
-                <p class="dev-meta">${row.clips.length === 1 ? '1 ejemplo' : `${row.clips.length} ejemplos`} · ${(row.avgMs / 1000).toFixed(1)} s cada uno</p>
-              </div>
-              <select class="input dev-move" data-move aria-label="Mover a otra carpeta">${folderOpts(row.clips[0].folder)}</select>
-              <button class="icon-btn dev-del" type="button" data-del aria-label="Borrar ${row.clips.length === 1 ? 'el ejemplo' : 'los ejemplos'}">${icon('trash', 18)}</button>
-            </li>`,
-            )
-            .join('')}
-        </ul>
+          (it) => `
+      <article class="dev-card" data-key="${esc(it.key)}">
+        <button class="dev-grip" type="button" data-grip aria-label="Arrastrar «${esc(it.text)}» para fusionarla con otra palabra">${icon('layout-grid', 18)}</button>
+        <div class="dev-card__body">
+          <h4 class="dev-card__title">${esc(it.text)}${it.merged.length ? `<span class="dev-badge">Fusionada con ${it.merged.map((m) => `«${esc(m)}»`).join(', ')}</span>` : ''}</h4>
+          <p class="dev-meta">${it.clips.length === 1 ? '1 ejemplo' : `${it.clips.length} ejemplos`} · ${it.sources.length === 1 ? '1 video' : `${it.sources.length} videos`}</p>
+          <ul class="dev-chips">${it.sources.map((s) => `<li title="${esc(s.name)}">${icon('play', 12)}<span>${esc(s.name)}</span><b>${s.n}</b></li>`).join('')}</ul>
+        </div>
+        <select class="input dev-move" data-move aria-label="Carpeta de «${esc(it.text)}»">${folderOpts(it.folder)}</select>
+        <div class="dev-card__menu">
+          <button class="icon-btn" type="button" data-menu aria-haspopup="menu" aria-expanded="${menu?.key === it.key}" aria-label="Más opciones de «${esc(it.text)}»">${icon('more', 20)}</button>
+          ${renderMenu(it, everything)}
+        </div>
       </article>`,
         )
         .join('');
@@ -203,12 +220,10 @@ export function openDevPanel() {
     renderMain();
   };
 
-  const textsOf = (ids: number[]) => [...new Set(clips.filter((c) => ids.includes(c.id)).map((c) => c.text.trim()))];
-
-  /** Lo que se borra o se mueve también se actualiza para todos los dispositivos. */
+  /** Lo que cambia también se actualiza para todos los dispositivos. */
   const publish = async (texts: string[]) => {
     try {
-      for (const t of texts) await publishPhrase(t);
+      for (const t of [...new Set(texts.map((x) => x.trim()).filter(Boolean))]) await publishPhrase(t);
       await syncShared();
     } catch (err) {
       toast(`Se guardó aquí, pero no se pudo publicar para todos: ${(err as Error).message}`, { tone: 'warn' });
@@ -240,13 +255,61 @@ export function openDevPanel() {
     }, 3000);
   };
 
+  const textsOfClips = (list: DevClip[]) => list.flatMap((c) => [c.text, ...(c.orig_text ? [c.orig_text] : [])]);
+
+  /** Fusiona la palabra `fromKey` dentro de `intoKey`, con «Deshacer». */
+  const merge = async (fromKey: string, intoKey: string) => {
+    const from = clipsOf(fromKey);
+    const into = clipsOf(intoKey);
+    if (!from.length || !into.length || fromKey === intoKey) return;
+    const intoText = into[0].text.trim();
+    const intoFolder = majority(into.map((c) => c.folder));
+    const fromText = from[0].text.trim();
+    const before = from.map((c) => ({ ...c }));
+    const texts = [...textsOfClips(from), intoText];
+    menu = null;
+    try {
+      await mergeClips(from, intoText, intoFolder);
+      await publish(texts);
+      await load();
+      toast(`«${fromText}» se fusionó con «${intoText}».`, {
+        tone: 'ok',
+        ms: 9000,
+        action: {
+          label: 'Deshacer',
+          run: () =>
+            void (async () => {
+              try {
+                await restoreClips(before);
+                await publish(texts);
+                await load();
+              } catch (err) {
+                toast(`No se pudo deshacer: ${(err as Error).message}`, { tone: 'warn' });
+              }
+            })(),
+        },
+      });
+    } catch (err) {
+      toast(`No se pudo fusionar: ${(err as Error).message}`, { tone: 'warn' });
+    }
+  };
+
+  const keyFrom = (el: HTMLElement) => el.closest<HTMLElement>('[data-key]')?.dataset.key ?? '';
+  const itemClips = (key: string) => (active === ALL ? clipsOf(key) : clipsOf(key).filter((c) => c.folder === active));
+
   dlg.addEventListener('click', (e) => {
     const t = e.target as HTMLElement;
     if (t.closest('[data-close]')) return close();
 
+    if (menu && !t.closest('[data-menu-box]') && !t.closest('[data-menu]')) {
+      menu = null;
+      renderMain();
+    }
+
     const fBtn = t.closest<HTMLElement>('[data-folder]');
     if (fBtn) {
       active = fBtn.dataset.folder!;
+      menu = null;
       return render();
     }
     if (t.closest('#dev-import') || t.closest('[data-import]')) {
@@ -267,21 +330,56 @@ export function openDevPanel() {
     const delFolder = t.closest<HTMLElement>('[data-del-folder]');
     if (delFolder) {
       const name = delFolder.dataset.delFolder!;
+      const texts = clips.filter((c) => c.folder === name).map((c) => c.text);
       return arm(delFolder, '¿Seguro?', () =>
-        void guard(() => deleteFolder(name), `Carpeta «${name}» borrada. Sus frases pasaron a «${DEFAULT_FOLDER}».`),
+        void guard(() => deleteFolder(name), `Carpeta «${name}» borrada. Sus palabras pasaron a «${DEFAULT_FOLDER}».`, texts),
       );
     }
 
-    const delGroup = t.closest<HTMLElement>('[data-del-group]');
-    if (delGroup) {
-      const ids = delGroup.closest<HTMLElement>('[data-ids]')!.dataset.ids!.split(',').map(Number);
-      return arm(delGroup, '¿Borrar todo?', () => void guard(() => deleteClips(ids), 'Video borrado.', textsOf(ids)));
+    const dots = t.closest<HTMLElement>('[data-menu]');
+    if (dots) {
+      const key = keyFrom(dots);
+      menu = menu?.key === key ? null : { key, mode: 'main' };
+      return renderMain();
     }
+    if (t.closest('[data-menu-back]')) {
+      if (menu) menu.mode = 'main';
+      return renderMain();
+    }
+    const act = t.closest<HTMLElement>('[data-act]');
+    if (act && menu) {
+      const key = menu.key;
+      const what = act.dataset.act;
+      if (what === 'merge') {
+        menu.mode = 'merge';
+        return renderMain();
+      }
+      if (what === 'unmerge') {
+        const list = itemClips(key);
+        const texts = textsOfClips(list);
+        menu = null;
+        return void guard(() => unmergeClips(list), 'Se desfusionó: cada palabra volvió a ser como antes.', texts);
+      }
+      if (what === 'delete') {
+        const list = itemClips(key);
+        const texts = textsOfClips(list);
+        const ids = list.map((c) => c.id);
+        return arm(act, '¿Seguro? Se borra todo', () => {
+          menu = null;
+          void guard(() => deleteClips(ids), list.length === 1 ? 'Ejemplo eliminado.' : 'Palabra eliminada.', texts);
+        });
+      }
+    }
+    const into = t.closest<HTMLElement>('[data-merge-into]');
+    if (into && menu) return void merge(menu.key, into.dataset.mergeInto!);
+  });
 
-    const del = t.closest<HTMLElement>('[data-del]');
-    if (del) {
-      const ids = idsOf(del);
-      return arm(del, '¿Borrar?', () => void guard(() => deleteClips(ids), ids.length === 1 ? 'Ejemplo borrado.' : 'Frase borrada.', textsOf(ids)));
+  dlg.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && menu) {
+      e.preventDefault();
+      e.stopPropagation();
+      menu = null;
+      renderMain();
     }
   });
 
@@ -300,10 +398,9 @@ export function openDevPanel() {
   dlg.addEventListener('change', (e) => {
     const sel = (e.target as HTMLElement).closest<HTMLSelectElement>('[data-move]');
     if (!sel) return;
-    {
-      const ids = idsOf(sel);
-      void guard(() => moveClips(ids, sel.value), `Movida a «${sel.value}».`);
-    }
+    const list = itemClips(keyFrom(sel));
+    const ids = list.map((c) => c.id);
+    void guard(() => moveClips(ids, sel.value), `«${list[0]?.text.trim() ?? ''}» pasó a «${sel.value}».`, textsOfClips(list));
   });
 
   q<HTMLInputElement>('#dev-q').addEventListener('input', (e) => {
@@ -311,9 +408,57 @@ export function openDevPanel() {
     renderMain();
   });
 
+  /* ---------- Arrastrar una palabra sobre otra para fusionarlas (mouse y dedo) ---------- */
+
+  let drag: { key: string; ghost: HTMLElement; target: string; pid: number; grip: HTMLElement } | null = null;
+
+  const endDrag = () => {
+    if (!drag) return;
+    drag.ghost.remove();
+    dlg.querySelectorAll('.is-drop').forEach((n) => n.classList.remove('is-drop'));
+    dlg.querySelector('.dev-card.is-dragging')?.classList.remove('is-dragging');
+    drag = null;
+  };
+
+  dlg.addEventListener('pointerdown', (e) => {
+    const grip = (e.target as HTMLElement).closest<HTMLElement>('[data-grip]');
+    if (!grip || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    e.preventDefault();
+    const card = grip.closest<HTMLElement>('.dev-card')!;
+    const ghost = document.createElement('div');
+    ghost.className = 'dev-ghost';
+    ghost.textContent = card.querySelector('.dev-card__title')?.firstChild?.textContent ?? '';
+    dlg.appendChild(ghost);
+    card.classList.add('is-dragging');
+    grip.setPointerCapture(e.pointerId);
+    drag = { key: card.dataset.key!, ghost, target: '', pid: e.pointerId, grip };
+    ghost.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 12}px)`;
+  });
+
+  dlg.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.pid) return;
+    drag.ghost.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 12}px)`;
+    const under = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>('.dev-card');
+    const target = under && under.dataset.key !== drag.key ? under.dataset.key! : '';
+    if (target !== drag.target) {
+      dlg.querySelectorAll('.is-drop').forEach((n) => n.classList.remove('is-drop'));
+      if (target) under!.classList.add('is-drop');
+      drag.target = target;
+    }
+  });
+
+  dlg.addEventListener('pointerup', (e) => {
+    if (!drag || e.pointerId !== drag.pid) return;
+    const { key, target } = drag;
+    endDrag();
+    if (target) void merge(key, target);
+  });
+  dlg.addEventListener('pointercancel', endDrag);
+
   const stop = watchDevData(() => void load());
   const close = () => {
     stop();
+    endDrag();
     dlg.close();
     dlg.remove();
   };

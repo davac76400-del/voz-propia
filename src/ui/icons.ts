@@ -1,6 +1,6 @@
 import {
   Activity, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, AudioLines, AudioWaveform, Bath, Bed, Bell, BrainCircuit, Camera,
-  Check, ChevronLeft, ChevronRight, CircleHelp, Code, Contrast, Cpu, Download, ExternalLink, Eye, Folder, FolderPlus, Frown, Gauge,
+  Check, ChevronLeft, ChevronRight, CircleHelp, Code, Contrast, Cpu, Download, Ellipsis, ExternalLink, Eye, Folder, FolderPlus, Frown, Gauge,
   GlassWater, Hand, HandHeart, Heart, House, Info, LayoutDashboard, LayoutGrid, Lightbulb, Lock, LogIn,
   MessageCircle, Mic, Moon, MousePointer2, Music, Palette, Pencil, Phone, Pill, Play, Plus, RefreshCcw, RotateCcw, ScanFace, Search,
   Settings, ShieldCheck, SlidersHorizontal, Smile, Snowflake, Sparkles, Square, Stethoscope, Sun, SwitchCamera,
@@ -12,7 +12,7 @@ const ICONS: Record<string, IconNode> = {
   activity: Activity, 'arrow-down': ArrowDown, 'arrow-left': ArrowLeft, 'arrow-right': ArrowRight, 'arrow-up': ArrowUp, 'arrow-up-right': ArrowUpRight,
   'audio-lines': AudioLines, waveform: AudioWaveform, bath: Bath, bed: Bed, bell: Bell, brain: BrainCircuit,
   camera: Camera, check: Check, 'chevron-left': ChevronLeft, 'chevron-right': ChevronRight, help: CircleHelp,
-  code: Code, contrast: Contrast, cpu: Cpu, download: Download, external: ExternalLink, eye: Eye, folder: Folder, 'folder-plus': FolderPlus, frown: Frown,
+  code: Code, contrast: Contrast, cpu: Cpu, download: Download, more: Ellipsis, external: ExternalLink, eye: Eye, folder: Folder, 'folder-plus': FolderPlus, frown: Frown,
   gauge: Gauge, 'glass-water': GlassWater, hand: Hand, 'hand-heart': HandHeart, heart: Heart, house: House,
   info: Info, dashboard: LayoutDashboard, 'layout-grid': LayoutGrid, lightbulb: Lightbulb, lock: Lock,
   'log-in': LogIn, 'message-circle': MessageCircle, mic: Mic, moon: Moon, pointer: MousePointer2, music: Music,

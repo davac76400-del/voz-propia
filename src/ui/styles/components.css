@@ -940,18 +940,6 @@ label.btn {
   pointer-events: none;
 }
 
-.toasts[popover] {
-  top: auto;
-  right: auto;
-  height: auto;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  overflow: visible;
-}
-
 [data-mode='inicio'] .toasts {
   bottom: calc(env(safe-area-inset-bottom) + 20px);
 }

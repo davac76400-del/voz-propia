@@ -7,8 +7,24 @@ interface ToastOptions {
   ms?: number;
 }
 
+/** Con una ventana modal abierta, todo lo de afuera queda congelado: el aviso va dentro de esa ventana. */
+function hostFor(): HTMLElement | null {
+  const modal = Array.from(document.querySelectorAll('dialog[open]'))
+    .filter((d) => d.matches(':modal'))
+    .pop();
+  if (!modal) return document.getElementById('toasts');
+  let host = modal.querySelector<HTMLElement>(':scope > .toasts');
+  if (!host) {
+    host = document.createElement('div');
+    host.className = 'toasts';
+    host.setAttribute('aria-live', 'polite');
+    modal.appendChild(host);
+  }
+  return host;
+}
+
 export function toast(message: string, opts: ToastOptions = {}) {
-  const host = document.getElementById('toasts');
+  const host = hostFor();
   if (!host) return;
   const el = document.createElement('div');
   el.className = `toast toast--${opts.tone ?? 'info'}`;
@@ -25,14 +41,8 @@ export function toast(message: string, opts: ToastOptions = {}) {
     opts.action?.run();
     close();
   });
+  // Un «Deshacer» viejo no debe poder pisar cambios nuevos.
+  if (opts.action) host.querySelectorAll('.toast:has(.toast__action)').forEach((n) => n.remove());
   host.append(el);
-  try {
-    // Sobre las ventanas modales (que viven en la capa superior del navegador) para que el aviso se vea.
-    host.setAttribute('popover', 'manual');
-    if (host.matches(':popover-open')) host.hidePopover();
-    host.showPopover();
-  } catch {
-    /* navegador sin Popover: queda con su z-index normal */
-  }
   setTimeout(close, opts.ms ?? (opts.action ? 9000 : 3200));
 }

@@ -356,18 +356,25 @@ export function guiaView(root: HTMLElement) {
   /* ---------- Palabras con las que contamos (solo las que ya tienen ejemplos) ---------- */
 
   const renderWords = () => {
-    const ready = new Set(engine.trainedPhrases.map((p) => p.id));
-    const groups = ORDER.map((c) => ({ c, items: engine.phrases.filter((p) => p.category === c && ready.has(p.id)) })).filter((g) => g.items.length);
+    const trained = engine.trainedPhrases;
+    // Las palabras que preparó el programador se agrupan en sus carpetas; las demás, por categoría.
+    const byFolder = new Map<string, typeof trained>();
+    for (const p of trained.filter((x) => x.folder)) (byFolder.get(p.folder!) ?? byFolder.set(p.folder!, []).get(p.folder!)!).push(p);
+    const folderGroups = [...byFolder]
+      .sort(([a], [b]) => Number(a === 'Sin carpeta') - Number(b === 'Sin carpeta') || a.localeCompare(b, 'es'))
+      .map(([name, items]) => ({ key: name, label: name === 'Sin carpeta' ? 'Otras palabras' : name, folder: true, items }));
+    const catGroups = ORDER.map((c) => ({ key: c, label: CATEGORY_LABEL[c], folder: false, items: trained.filter((p) => !p.folder && p.category === c) })).filter((g) => g.items.length);
+    const groups = [...folderGroups, ...catGroups];
     wordsHost.innerHTML = groups.length
       ? groups
           .map(
             (g) => `
       <div class="g-group">
-        <h3><i class="cat-dot cat-dot--${g.c}" aria-hidden="true"></i>${CATEGORY_LABEL[g.c]}</h3>
+        <h3>${g.folder ? `<span class="g-folder-ic" aria-hidden="true">${icon('folder', 16, 2.2)}</span>` : `<i class="cat-dot cat-dot--${g.key}" aria-hidden="true"></i>`}${esc(g.label)}<span class="g-group__n">${g.items.length}</span></h3>
         <div class="g-tiles">${g.items
           .map(
-            (p) => `<button class="g-word g-word--${g.c}" type="button" data-say="${p.id}">
-              <span class="sphere sphere--sm sphere--${g.c}">${icon(p.icon, 20)}</span>
+            (p) => `<button class="g-word g-word--${p.category}" type="button" data-say="${p.id}">
+              <span class="sphere sphere--sm sphere--${p.category}">${icon(p.icon, 20)}</span>
               <span>${esc(p.text)}</span>
             </button>`,
           )

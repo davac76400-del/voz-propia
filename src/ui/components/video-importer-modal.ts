@@ -7,7 +7,7 @@ import { collapseRepeats, splitRepetitions, sparkline, type Pause, type Repetiti
 import { processVideoFile, type FrameFeatures } from '../../core/vision/video-processor';
 import { transcribeVideoAudio } from '../../core/vision/transcriber';
 import { publishPhrase, syncShared } from '../../core/shared-sync';
-import { DEFAULT_FOLDER, insertClips, listFolders } from '../../core/supabase';
+import { DEFAULT_FOLDER, createFolder, insertClips, listFolders } from '../../core/supabase';
 import { esc } from '../dom';
 import { icon } from '../icons';
 import { toast } from './toast';
@@ -17,6 +17,7 @@ const MIN_FRAMES = 8;
 const SUSPECT_FACTOR = 1.8;
 const SCORE_SAMPLE = 30;
 const INSERT_BATCH = 10;
+const NEW_FOLDER = '__new';
 
 interface Rep {
   rep: Repetition;
@@ -102,7 +103,9 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
         <span class="field__label">Guardar en la carpeta</span>
         <select class="input" id="imp-folder">
           ${folders.map((f) => `<option value="${esc(f)}"${f === startFolder ? ' selected' : ''}>${esc(f)}</option>`).join('')}
+          <option value="${NEW_FOLDER}">+ Nueva carpeta…</option>
         </select>
+        <input class="input" id="imp-newfolder" type="text" maxlength="40" placeholder="Nombre de la carpeta nueva" autocomplete="off" hidden>
       </label>
 
       <input type="file" id="imp-file" accept="video/*" multiple hidden>
@@ -132,6 +135,11 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
   const errBox = q<HTMLParagraphElement>('#imp-err');
   const result = q<HTMLDivElement>('#imp-result');
   const folderSel = q<HTMLSelectElement>('#imp-folder');
+  const newFolder = q<HTMLInputElement>('#imp-newfolder');
+  folderSel.addEventListener('change', () => {
+    newFolder.hidden = folderSel.value !== NEW_FOLDER;
+    if (!newFolder.hidden) newFolder.focus();
+  });
 
   let groups: Group[] = [];
   let failures: string[] = [];
@@ -310,9 +318,15 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
     const ready = groups.filter((g) => g.phrase.trim() && g.reps.some((r) => r.keep));
     if (!ready.length) return void toast('Escribe la frase de cada video.', { tone: 'warn' });
     const btn = q<HTMLButtonElement>('#imp-save');
+    let folderName = folderSel.value;
+    if (folderName === NEW_FOLDER) {
+      folderName = newFolder.value.trim();
+      if (!folderName) return void toast('Escribe el nombre de la carpeta nueva.', { tone: 'warn' });
+    }
     btn.disabled = true;
     let published = true;
     try {
+      if (folderName !== folderSel.value && !folders.includes(folderName)) await createFolder(folderName);
       for (const g of ready) {
         const phrase = g.phrase.trim();
         const kept = g.reps.filter((r) => r.keep);
@@ -323,7 +337,7 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
             start_time: r.rep.startMs,
             end_time: r.rep.endMs,
             frame_count: r.rep.frames.length,
-            folder: folderSel.value,
+            folder: folderName,
             source_name: g.source,
             lip_points: { dims: seq.dims, fps: round(seq.fps), frames: Array.from(seq.frames, round) },
           };
@@ -341,13 +355,13 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
       }
       await syncShared();
       const total = ready.reduce((n, g) => n + g.reps.filter((r) => r.keep).length, 0);
+      close();
       toast(
         published
           ? `${total} ejemplo${total === 1 ? '' : 's'} guardado${total === 1 ? '' : 's'} y publicado${total === 1 ? '' : 's'} para todos.`
           : `${total} ejemplo${total === 1 ? '' : 's'} guardado${total === 1 ? '' : 's'}, pero no se pudo publicar para los demás dispositivos.`,
         { tone: published ? 'ok' : 'warn' },
       );
-      close();
     } catch (err) {
       btn.disabled = false;
       toast(`No se pudo guardar: ${(err as Error).message}`, { tone: 'warn' });
