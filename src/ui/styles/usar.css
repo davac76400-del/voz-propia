@@ -932,3 +932,132 @@
     animation: none;
   }
 }
+
+/* ---------- Texto que se escribe (v2) ---------- */
+
+.u-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+}
+
+.u-paper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-height: 150px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 6px 4px;
+}
+
+.u-text,
+.u-placeholder {
+  margin: 0;
+  width: 100%;
+  font: 800 clamp(2.4rem, 5.4vw, 4.2rem) / 1.12 var(--font-display);
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+
+.u-placeholder {
+  color: rgb(255 255 255 / 0.34);
+  font-size: clamp(1.5rem, 3vw, 2.1rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.u-w {
+  display: inline-block;
+  color: #fff;
+}
+
+.u-w:nth-child(3n + 2) { color: var(--t-a2); }
+.u-w:nth-child(3n) { color: var(--t-a1l); }
+
+.u-w.is-pop {
+  animation: u-pop 0.5s var(--ease-out);
+}
+
+@keyframes u-pop {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.85);
+    filter: blur(6px);
+  }
+}
+
+.u-caret {
+  display: inline-block;
+  width: 4px;
+  height: 0.9em;
+  margin-left: 6px;
+  vertical-align: -0.1em;
+  border-radius: 2px;
+  background: var(--t-a2);
+  animation: u-blink 1s steps(2, start) infinite;
+}
+
+@keyframes u-blink {
+  to { visibility: hidden; }
+}
+
+.u-status {
+  min-height: 56px;
+  display: grid;
+  align-items: center;
+}
+
+.u-status > * {
+  animation: u-in 0.35s var(--ease-out);
+}
+
+.u-st {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: #fff;
+  font: 600 1.05rem/1.4 var(--font-body);
+}
+
+.u-st--mute { color: var(--u-mute); }
+.u-st--ok { color: var(--t-a2); font-weight: 700; }
+.u-st--miss { color: #ffd9a8; }
+.u-st--miss b { color: #fff; }
+
+.u-st--ok .u-check {
+  width: 26px;
+  height: 26px;
+  margin: 0;
+}
+
+.u-status .u-listen {
+  display: grid;
+  gap: 8px;
+}
+
+.u-status .u-eq {
+  height: 38px;
+}
+
+.u-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.u-tools[hidden] { display: none; }
+
+@media (max-width: 920px) {
+  .u-paper { min-height: 110px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .u-w.is-pop,
+  .u-caret,
+  .u-status > * { animation: none; }
+}

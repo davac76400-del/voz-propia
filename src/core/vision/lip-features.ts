@@ -3,7 +3,13 @@ import type { Category as MPCategory, NormalizedLandmark } from '@mediapipe/task
 // Contorno exterior e interior de los labios en la malla de 478 puntos de MediaPipe.
 export const LIP_OUTER = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185];
 export const LIP_INNER = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415, 310, 311, 312, 13, 82, 81, 80, 191];
-const LIP_POINTS = [...LIP_OUTER, ...LIP_INNER];
+// Puntos de apoyo alrededor de la boca: base de la nariz, mejillas, surcos y mentón.
+// Siguen el movimiento de la mandíbula y las comisuras, que los labios solos no muestran.
+export const MOUTH_AROUND = [
+  2, 98, 327, 164, 167, 393, 205, 425, 187, 411, 207, 427, 216, 436, 92, 322, 57, 287, 43, 273,
+  169, 394, 135, 364, 140, 369, 171, 396, 175, 199, 200, 152, 148, 377, 176, 400,
+];
+const LIP_POINTS = [...LIP_OUTER, ...LIP_INNER, ...MOUTH_AROUND];
 const EYE_L = 33;
 const EYE_R = 263;
 

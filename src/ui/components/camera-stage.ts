@@ -1,7 +1,7 @@
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { state, updateSettings } from '../../app/state';
 import { listCameras, tracker, type TrackerStatus, type TrackFrame } from '../../core/vision/face-tracker';
-import { LIP_INNER, LIP_OUTER } from '../../core/vision/lip-features';
+import { LIP_INNER, LIP_OUTER, MOUTH_AROUND } from '../../core/vision/lip-features';
 import { icon } from '../icons';
 
 export type FaceState = 'sin-camara' | 'buscando' | 'lejos' | 'listo';
@@ -212,10 +212,17 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
     ctx.stroke();
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#ffffff';
-    for (let i = 0; i < LIP_OUTER.length; i += 2) {
-      const [x, y] = map(lm[LIP_OUTER[i]]);
+    for (const i of [...LIP_OUTER, ...LIP_INNER]) {
+      const [x, y] = map(lm[i]);
       ctx.beginPath();
-      ctx.arc(x, y, 1.8, 0, Math.PI * 2);
+      ctx.arc(x, y, 1.9, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = glow;
+    for (const i of MOUTH_AROUND) {
+      const [x, y] = map(lm[i]);
+      ctx.beginPath();
+      ctx.arc(x, y, 1.6, 0, Math.PI * 2);
       ctx.fill();
     }
 

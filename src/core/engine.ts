@@ -1,3 +1,4 @@
+import { FEATURE_DIMS } from './vision/lip-features';
 import { FewShotClassifier, type Embedded } from './learn/classifier';
 import { NeuralEncoder } from './learn/neural-encoder';
 import { resample, TARGET_LEN, trimStill, withDeltas } from './learn/sequence';
@@ -43,7 +44,8 @@ class Engine {
       this.phrases = DEFAULT_PHRASES.map((p, i) => ({ ...p, id: uid(), order: i, createdAt: now }));
       for (const p of this.phrases) await db.putPhrase(p);
     }
-    this.samples = await db.samples();
+    // Los ejemplos de versiones anteriores (menos puntos) ya no sirven: se ignoran.
+    this.samples = (await db.samples()).filter((x) => x.seq.dims === FEATURE_DIMS);
     await this.retrain();
     void this.tryNeural();
   }
@@ -169,7 +171,7 @@ class Engine {
       if (phrase.folder !== it.folder) phrase = await this.savePhrase({ ...phrase, folder: it.folder });
       await dropShared(it.key);
       const now = Date.now();
-      for (const [i, seq] of it.seqs.entries()) {
+      for (const [i, seq] of it.seqs.filter((q) => q.dims === FEATURE_DIMS).entries()) {
         const s: Sample = { id: `${SHARED_PREFIX}${it.key}:${i}`, phraseId: phrase.id, seq, source: 'grabacion', createdAt: now + i };
         this.samples.push(s);
         await db.putSample(s);

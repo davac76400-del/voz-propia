@@ -41,7 +41,14 @@ export function usarView(root: HTMLElement) {
             <p class="u-label" id="u-said-l">Lo que dices</p>
             <span class="u-count" data-count></span>
           </div>
-          <div class="u-screen" data-screen aria-live="polite"></div>
+          <div class="u-screen" data-screen>
+            <div class="u-paper" data-paper aria-live="polite"></div>
+            <div class="u-status" data-status></div>
+            <div class="u-tools" data-tools hidden>
+              <button class="u-pill" type="button" data-speak-all>${icon('volume', 18)}<span>Decir todo</span></button>
+              <button class="u-pill u-pill--ghost" type="button" data-clear>${icon('rotate-ccw', 18)}<span>Borrar</span></button>
+            </div>
+          </div>
           <div class="u-words">
             <p class="u-label">Palabras disponibles <small>toca una para escucharla</small></p>
             <ul class="u-chips" data-words></ul>
@@ -70,7 +77,9 @@ export function usarView(root: HTMLElement) {
     </div>`;
 
   const el = $('[data-usar]', root);
-  const screen = $('[data-screen]', root);
+  const screen = $('[data-status]', root);
+  const paper = $('[data-paper]', root);
+  const tools = $('[data-tools]', root);
   const wordsEl = $('[data-words]', root);
   const countEl = $('[data-count]', root);
   const liveEl = $('[data-live]', root);
@@ -103,79 +112,48 @@ export function usarView(root: HTMLElement) {
     eq = Array.from(screen.querySelectorAll<HTMLElement>('.u-eq i'));
   };
 
+  /* Texto que se va escribiendo: solo entran las palabras que se leyeron bien. */
+  const said: { id: string; text: string }[] = [];
+
+  const renderPaper = (popLast = false) => {
+    tools.hidden = said.length === 0;
+    paper.classList.toggle('has-words', said.length > 0);
+    paper.innerHTML = said.length
+      ? `<p class="u-text">${said
+          .map((w, i) => `<span class="u-w${popLast && i === said.length - 1 ? ' is-pop' : ''}">${esc(w.text)}</span>`)
+          .join(' ')}<i class="u-caret" aria-hidden="true"></i></p>`
+      : `<p class="u-placeholder">Aquí se escribe lo que digas<i class="u-caret" aria-hidden="true"></i></p>`;
+    paper.scrollTop = paper.scrollHeight;
+  };
+
   const renderEmpty = () =>
-    setScreen(
-      'empty',
-      `<div class="u-empty">
-        <span class="u-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-        <h2>Aún no hay palabras listas</h2>
-        <p>Nuestro equipo las prepara con cuidado. Cuando agregue la primera, aparece aquí sola, al instante.</p>
-      </div>`,
-    );
+    setScreen('empty', `<p class="u-st u-st--mute"><span class="u-dots" aria-hidden="true"><i></i><i></i><i></i></span> Aún no hay palabras listas. Aparecen aquí solas cuando se agreguen.</p>`);
 
   const renderIdle = () => {
-    const list = trained();
-    if (!list.length) return renderEmpty();
-    const only = list.length === 1 ? list[0] : null;
-    setScreen(
-      'idle',
-      `<div class="u-idle">
-        <p class="u-idle__eyebrow">Listo para leer</p>
-        ${
-          only
-            ? `<p class="u-ghost" aria-hidden="true">${esc(only.text)}</p>
-               <p class="u-idle__lead">Pon tu cara frente a la cámara, toca el botón y di <b>«${esc(only.text)}»</b> moviendo los labios.</p>`
-            : `<p class="u-idle__lead">Pon tu cara frente a la cámara, toca el botón y di <b>una de las palabras</b> moviendo los labios.</p>`
-        }
-      </div>`,
-    );
+    if (!trained().length) return renderEmpty();
+    setScreen('idle', `<p class="u-st u-st--mute">Toca el botón y di una palabra moviendo los labios.</p>`);
   };
 
   const renderListening = () =>
     setScreen(
       'listening',
-      `<div class="u-listen">
-        <div class="u-eq" aria-hidden="true">${'<i></i>'.repeat(BARS)}</div>
-        <p class="u-listen__t">Te estoy viendo…</p>
-        <p class="u-listen__s">Mueve los labios como si hablaras.</p>
-      </div>`,
+      `<div class="u-listen"><div class="u-eq" aria-hidden="true">${'<i></i>'.repeat(BARS)}</div><p class="u-st">Te estoy viendo…</p></div>`,
     );
 
   const renderSaid = (p: Phrase, match: number, corrected = false) => {
+    said.push({ id: p.id, text: p.text });
+    renderPaper(true);
     const pct = Math.round(match * 100);
     setScreen(
       'said',
-      `<div class="u-said-ok">
-        <span class="u-burst" aria-hidden="true"></span>
-        <span class="u-check" aria-hidden="true">${icon('check', 30, 3)}</span>
-        <p class="u-said-ok__eyebrow">${corrected ? 'Corregido, gracias' : 'Dijiste'}</p>
-        <p class="u-word" data-word>${esc(p.text)}</p>
-        ${
-          corrected
-            ? ''
-            : `<div class="u-match" role="img" aria-label="Se parece ${pct} por ciento a la palabra"><span>Se parece</span><div class="u-match__track"><i style="--m:${match.toFixed(3)}"></i></div><b>${pct}%</b></div>`
-        }
-        <div class="u-actions">
-          <button class="u-pill" type="button" data-repeat="${p.id}">${icon('volume', 18)}<span>Decir otra vez</span></button>
-          <button class="u-pill u-pill--ghost" type="button" data-again>${icon('rotate-ccw', 18)}<span>Otra palabra</span></button>
-        </div>
-      </div>`,
+      `<p class="u-st u-st--ok"><span class="u-check" aria-hidden="true">${icon('check', 16, 3)}</span>${
+        corrected ? 'Corregido, gracias' : `Se parece ${pct}%`
+      }</p>`,
     );
   };
 
   const renderMiss = (title: string, detail: string) => {
-    const list = trained();
-    const only = list.length === 1 ? list[0] : null;
-    setScreen(
-      'miss',
-      `<div class="u-miss">
-        <span class="u-miss__ic" aria-hidden="true">${icon('help', 30, 2)}</span>
-        <h2>${esc(title)}</h2>
-        <p>${esc(detail)}</p>
-        ${only ? `<p class="u-miss__try">Inténtalo otra vez: di <b>«${esc(only.text)}»</b>.</p>` : ''}
-        <div class="u-actions"><button class="u-pill" type="button" data-again>${icon('rotate-ccw', 18)}<span>Intentar de nuevo</span></button></div>
-      </div>`,
-    );
+    setScreen('miss', `<p class="u-st u-st--miss"><b>${esc(title)}.</b> ${esc(detail)}</p>`);
     vibrate([20, 40, 20]);
   };
 
@@ -207,8 +185,7 @@ export function usarView(root: HTMLElement) {
   const renderReady = () => {
     const n = trained().length;
     btn.disabled = n === 0;
-    const only = n === 1 ? trained()[0] : null;
-    if (!capture) label.textContent = only ? `Toca y di «${only.text}»` : n ? 'Toca y di una palabra' : 'Esperando la primera palabra';
+    if (!capture) label.textContent = n ? 'Toca y di una palabra' : 'Esperando la primera palabra';
     if (mode === 'empty' || mode === 'idle') renderIdle();
     else if (!n) renderEmpty();
   };
@@ -219,8 +196,7 @@ export function usarView(root: HTMLElement) {
     btn.classList.toggle('is-live', live);
     stage.setRecording(live);
     el.classList.toggle('is-listening', live);
-    const only = trained().length === 1 ? trained()[0] : null;
-    label.textContent = live ? 'Leyendo tus labios…' : only ? `Toca y di «${only.text}»` : 'Toca y di una palabra';
+    label.textContent = live ? 'Leyendo tus labios…' : 'Toca y di una palabra';
     hint.textContent = live ? 'Toca otra vez para terminar.' : 'Sin voz, solo mueve los labios. Se detiene sola.';
     if (!live) ring.style.strokeDashoffset = String(RING);
   };
@@ -310,7 +286,7 @@ export function usarView(root: HTMLElement) {
           renderSaid(v.phrase, match);
           void say(v.phrase);
         } else {
-          renderMiss('No te entendí', `Tus labios se parecen poco a «${list[0].text}». No digo nada hasta estar seguro.`);
+          renderMiss('No te entendí', 'Repítelo con calma. No escribo nada hasta estar seguro.');
         }
       } else {
         const pred = await engine.recognize(seq, state.settings.autoSpeakThreshold);
@@ -356,7 +332,17 @@ export function usarView(root: HTMLElement) {
       const p = engine.phrase(b.dataset.repeat!);
       if (p) void say(p);
     }),
-    on(root, 'click', '[data-again]', () => renderIdle()),
+    on(root, 'click', '[data-clear]', () => {
+      said.length = 0;
+      renderPaper();
+      renderIdle();
+    }),
+    on(root, 'click', '[data-speak-all]', async () => {
+      for (const w of said) {
+        const p = engine.phrase(w.id);
+        if (p) await speakPhrase(p, state.settings);
+      }
+    }),
     on(root, 'click', '[data-pick]', async (_, b) => {
       const p = engine.phrase(b.dataset.pick!);
       if (!p) return;
@@ -391,6 +377,7 @@ export function usarView(root: HTMLElement) {
   addEventListener('keydown', onKey);
 
   updateNet();
+  renderPaper();
   renderWords();
   renderReady();
   void syncShared();

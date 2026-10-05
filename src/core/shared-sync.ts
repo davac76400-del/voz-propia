@@ -1,3 +1,4 @@
+import { FEATURE_DIMS } from './vision/lip-features';
 import { engine, MAX_SAMPLES_PER_PHRASE } from './engine';
 import { dtw } from './learn/dtw';
 import { supabase } from './supabase';
@@ -45,7 +46,7 @@ export async function publishPhrase(text: string): Promise<void> {
   const key = keyOf(text);
   const { data, error } = await supabase.from('programmer_videos').select('lip_points,folder').ilike('text', escapeLike(text.trim()));
   if (error) throw new Error(error.message);
-  const all = (data ?? []).filter((r) => (r.lip_points as RemoteSeq)?.frames?.length);
+  const all = (data ?? []).filter((r) => (r.lip_points as RemoteSeq)?.frames?.length && (r.lip_points as RemoteSeq).dims === FEATURE_DIMS);
   const rows = all.map((r) => r.lip_points as RemoteSeq);
   const counts = new Map<string, number>();
   for (const r of all) counts.set(r.folder as string, (counts.get(r.folder as string) ?? 0) + 1);
