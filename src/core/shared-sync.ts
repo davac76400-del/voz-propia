@@ -1,5 +1,7 @@
 import { isRaw, unpackRaw, type RemoteRaw } from './vision/raw-store';
 import { engine, MAX_SAMPLES_PER_PHRASE } from './engine';
+import { keyOf } from './language/key';
+import { curateExamples } from './learn/curate';
 import { dtw } from './learn/dtw';
 import { supabase } from './supabase';
 import type { LipSequence } from './types';
@@ -10,8 +12,6 @@ interface Versions {
 }
 
 const VERSIONS_KEY = 'voz-propia:shared-versions';
-const keyOf = (text: string) => text.trim().toLowerCase();
-const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 
 function readVersions(): Versions {
@@ -30,45 +30,67 @@ function writeVersions(v: Versions) {
   }
 }
 
-const median = (v: number[]) => [...v].sort((a, b) => a - b)[Math.floor(v.length / 2)];
+/** Qué pasó al juntar todas las grabaciones de una palabra. */
+export interface PublishSummary {
+  text: string;
+  /** Repeticiones guardadas de esta palabra, de todas las grabaciones. */
+  clips: number;
+  recordings: number;
+  /** Ejemplos con los que se queda la palabra. */
+  kept: number;
+  /** Patrones distintos que sirvieron. */
+  patterns: number;
+}
+
+const MAX_FOR_CURATION = 220;
 
 /**
- * Programador: reúne todos los ejemplos guardados de una frase, se queda con los más representativos
- * y los publica para que todos los dispositivos los usen.
+ * Programador: junta TODAS las grabaciones guardadas de la palabra (de cualquier video), quita las raras y se queda
+ * con los mejores ejemplos, repartidos entre las grabaciones, y los publica para que todos los dispositivos los usen.
  */
-export async function publishPhrase(text: string): Promise<void> {
+export async function publishPhrase(text: string): Promise<PublishSummary | null> {
   const key = keyOf(text);
-  const { data, error } = await supabase.from('programmer_videos').select('lip_points,folder').ilike('text', escapeLike(text.trim()));
-  if (error) throw new Error(error.message);
-  const all = (data ?? []).filter((r) => isRaw(r.lip_points));
-  const rows = all.map((r) => r.lip_points as RemoteRaw);
+  const names = await supabase.from('programmer_videos').select('text').limit(20000);
+  if (names.error) throw new Error(names.error.message);
+  const same = [...new Set((names.data ?? []).map((r) => r.text as string).filter((t) => keyOf(t) === key))];
+  const found = same.length
+    ? await supabase.from('programmer_videos').select('lip_points,folder,source_name').in('text', same)
+    : { data: [], error: null };
+  if (found.error) throw new Error(found.error.message);
+  const all = (found.data ?? []).filter((r) => isRaw(r.lip_points));
   const counts = new Map<string, number>();
   for (const r of all) counts.set(r.folder as string, (counts.get(r.folder as string) ?? 0) + 1);
   const folder = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'Sin carpeta';
 
-  if (!rows.length) {
+  if (!all.length) {
     const del = await supabase.from('shared_phrases').delete().eq('text_key', key);
     if (del.error) throw new Error(del.error.message);
-    return;
+    return null;
   }
 
+  // Con demasiadas repeticiones se revisan, repartidas parejo, las que alcanzan para decidir.
+  const step = Math.max(1, Math.ceil(all.length / MAX_FOR_CURATION));
+  const pool = all.filter((_, i) => i % step === 0);
+  const rows = pool.map((r) => r.lip_points as RemoteRaw);
+  const sources = pool.map((r) => String(r.source_name ?? 'sin nombre'));
+
   let chosen = rows;
-  if (rows.length > MAX_SAMPLES_PER_PHRASE) {
+  let patterns = 1;
+  if (rows.length > 3) {
     const emb = await Promise.all(rows.map((r) => engine.embed(unpackRaw(r)!)));
     const { L, D } = emb[0];
-    const step = Math.max(1, Math.ceil((rows.length - 1) / 30));
-    const scores = emb.map((e, i) => median(emb.filter((_, j) => j !== i && (j % step === 0 || step === 1)).map((o) => dtw(e.x, o.x, L, D))));
-    chosen = scores
-      .map((score, i) => ({ score, i }))
-      .sort((a, b) => a.score - b.score)
-      .slice(0, MAX_SAMPLES_PER_PHRASE)
-      .map(({ i }) => rows[i]);
+    const dist = rows.map(() => new Array<number>(rows.length).fill(0));
+    for (let i = 0; i < rows.length; i++) for (let j = i + 1; j < rows.length; j++) dist[i][j] = dist[j][i] = dtw(emb[i].x, emb[j].x, L, D);
+    const cur = curateExamples(sources.map((source) => ({ source })), dist, MAX_SAMPLES_PER_PHRASE);
+    chosen = cur.chosen.map((i) => rows[i]);
+    patterns = cur.patterns;
   }
 
   const { error: up } = await supabase
     .from('shared_phrases')
     .upsert({ text_key: key, text: text.trim(), folder, samples: chosen, updated_at: new Date().toISOString() }, { onConflict: 'text_key' });
   if (up) throw new Error(up.message);
+  return { text: text.trim(), clips: all.length, recordings: new Set(sources).size, kept: chosen.length, patterns };
 }
 
 let running: Promise<void> | null = null;

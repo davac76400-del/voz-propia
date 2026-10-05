@@ -5,6 +5,7 @@ import { mouthActivity, prepareFrames } from './learn/embed';
 import { TARGET_LEN, withDeltas } from './learn/sequence';
 import { sliceSequence, WordDecoder, type DecodedWord } from './learn/decoder';
 import { bigramBonus } from './language/spanish';
+import { keyOf } from './language/key';
 import { learnedBonus, recordSentence, setSeeds, transitionCount } from './language/learned';
 import { pushSnapshot, readHistory, tierOf, type TrainingSnapshot, type WordHealth } from './learn/progress';
 import { db, uid } from './storage/db';
@@ -324,7 +325,7 @@ class Engine {
     };
     for (const it of items) {
       let phrase =
-        this.phrases.find((p) => p.text.trim().toLowerCase() === it.key) ??
+        this.phrases.find((p) => keyOf(p.text) === it.key) ??
         (await this.savePhrase({ text: it.text, icon: 'sparkles', category: 'necesidad', folder: it.folder }));
       if (phrase.folder !== it.folder) phrase = await this.savePhrase({ ...phrase, folder: it.folder });
       await dropShared(it.key);

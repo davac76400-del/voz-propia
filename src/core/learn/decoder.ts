@@ -13,6 +13,10 @@ const WORD_COST = 0.15;
 /** Un pedazo y su rival más cercano más cerca que esto: la palabra es dudosa. */
 const DOUBT_MARGIN = 0.35;
 const LENGTH_FACTORS = [0.65, 0.8, 1, 1.25, 1.55];
+/** Representantes por palabra que se comparan primero al buscar dónde empieza cada palabra. */
+const REPS = 3;
+/** Un pedazo que ni a sus representantes se parece (con este margen sobre el límite) no se compara con los demás ejemplos. */
+const FAST_MARGIN = 1.3;
 
 interface Template {
   phraseId: string;
@@ -62,6 +66,10 @@ export class WordDecoder {
   private scale = 1;
   /** Duración típica de cada palabra, en segundos. */
   private durations = new Map<string, number>();
+  private reps = new Map<string, Template[]>();
+  private counts = new Map<string, number>();
+  /** Se puede apagar para comparar velocidad y exactitud en pruebas. */
+  static fast = true;
 
   get ready() {
     return this.templates.length > 0;
@@ -110,6 +118,40 @@ export class WordDecoder {
     this.std = sq;
     this.templates = raw.map((t) => ({ phraseId: t.phraseId, x: this.normalize(t.x) }));
     this.scale = this.estimateScale();
+    this.buildReps();
+  }
+
+  /** Por palabra: el ejemplo más central y los más distintos a él. */
+  private buildReps() {
+    this.reps = new Map();
+    this.counts = new Map();
+    const by = new Map<string, Template[]>();
+    for (const t of this.templates) (by.get(t.phraseId) ?? by.set(t.phraseId, []).get(t.phraseId)!).push(t);
+    for (const [id, list] of by) {
+      this.counts.set(id, list.length);
+      if (list.length <= REPS) {
+        this.reps.set(id, list);
+        continue;
+      }
+      const d = list.map(() => new Array<number>(list.length).fill(0));
+      for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) d[i][j] = d[j][i] = dtw(list[i].x, list[j].x, L, this.D2, BAND);
+      const central = d.map((row) => row.reduce((a, b) => a + b, 0)).reduce((best, v, i, arr) => (v < arr[best] ? i : best), 0);
+      const picked = [central];
+      while (picked.length < REPS) {
+        let far = -1;
+        let farD = -1;
+        for (let i = 0; i < list.length; i++) {
+          if (picked.includes(i)) continue;
+          const m = Math.min(...picked.map((k) => d[i][k]));
+          if (m > farD) {
+            farD = m;
+            far = i;
+          }
+        }
+        picked.push(far);
+      }
+      this.reps.set(id, picked.map((i) => list[i]));
+    }
   }
 
   private normalize(x: Float32Array) {
@@ -147,6 +189,16 @@ export class WordDecoder {
     ds.sort((a, b) => a - b);
     const d = ds.length >= 3 ? (ds[0] + ds[1]) / 2 : ds[0];
     return d / this.scale;
+  }
+
+  /** Como `ratio`, pero primero compara con los representantes y descarta de una vez lo que no se parece. */
+  private ratioFast(q: Float32Array, phraseId: string, limit: number) {
+    const reps = this.reps.get(phraseId);
+    if (!WordDecoder.fast || !reps || (this.counts.get(phraseId) ?? 0) <= reps.length) return this.ratio(q, phraseId);
+    let d1 = Infinity;
+    for (const t of reps) d1 = Math.min(d1, dtw(q, t.x, L, this.D2, BAND));
+    const r1 = d1 / this.scale;
+    return r1 > limit * FAST_MARGIN ? r1 : this.ratio(q, phraseId);
   }
 
   async decode(seq: LipSequence, opts: DecodeOptions): Promise<DecodedWord[]> {
@@ -191,7 +243,7 @@ export class WordDecoder {
           if (b > T) continue;
           const q = embedSeg(a, b);
           if (!q) continue;
-          const r = this.ratio(q, phrases[w]);
+          const r = this.ratioFast(q, phrases[w], limit);
           if (r < limit) segs.push({ a, b, w, r, i: segs.length });
           if (++work % 40 === 0) await tick();
         }

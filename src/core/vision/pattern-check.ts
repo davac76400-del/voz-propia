@@ -75,6 +75,39 @@ function longestRun(members: Set<number>, n: number) {
   return best;
 }
 
+
+/** Radio dentro del cual dos repeticiones se consideran del mismo patrón. */
+export function patternRadius(dist: number[][], indices: number[]): number {
+  const nearest = indices.map((i) => Math.min(...indices.map((j) => (j === i ? Infinity : dist[i][j]))));
+  const sorted = nearest.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return 1e-6;
+  return Math.max(sorted[Math.floor(RADIUS_QUANTILE * (sorted.length - 1))] * RADIUS_FACTOR, 1e-6);
+}
+
+/** Agrupa las repeticiones que se ven iguales. Devuelve los grupos de índices, el primero es el más numeroso. */
+export function clusterBySimilarity(dist: number[][], indices: number[], radius: number): number[][] {
+  const left = new Set(indices);
+  const groups: number[][] = [];
+  while (left.size) {
+    let center = -1;
+    let bestCount = -1;
+    let bestMean = Infinity;
+    for (const i of left) {
+      const near = [...left].filter((j) => dist[i][j] <= radius);
+      const mean = near.reduce((s, j) => s + dist[i][j], 0) / near.length;
+      if (near.length > bestCount || (near.length === bestCount && mean < bestMean)) {
+        center = i;
+        bestCount = near.length;
+        bestMean = mean;
+      }
+    }
+    const members = [...left].filter((j) => dist[center][j] <= radius).sort((a, b) => a - b);
+    members.forEach((j) => left.delete(j));
+    groups.push(members);
+  }
+  return groups.sort((a, b) => b.length - a.length);
+}
+
 /** `dist[i][j]` es qué tan distintas se ven las repeticiones i y j (0 = iguales). */
 export function checkPatterns(reps: RepInput[], dist: number[][]): PatternReport {
   const n = reps.length;
@@ -105,31 +138,12 @@ export function checkPatterns(reps: RepInput[], dist: number[][]): PatternReport
   if (n < 4) return { ...empty, cadence, longGaps };
 
   // Patrones: se parte de la repetición con más parecidas cerca, y se repite con las que quedan.
-  const nearest = reps.map((_, i) => Math.min(...reps.map((__, j) => (j === i ? Infinity : dist[i][j]))));
-  const sortedNearest = [...nearest].sort((a, b) => a - b);
-  const radius = Math.max(sortedNearest[Math.floor(RADIUS_QUANTILE * (sortedNearest.length - 1))] * RADIUS_FACTOR, 1e-6);
   const candidates = reps.map((_, i) => i).filter((i) => verdicts[i].reason !== 'trabado' && verdicts[i].reason !== 'duracion');
-  const left = new Set(candidates);
-  const clusters: PatternCluster[] = [];
-  while (left.size) {
-    let center = -1;
-    let bestCount = -1;
-    let bestMean = Infinity;
-    for (const i of left) {
-      const near = [...left].filter((j) => dist[i][j] <= radius);
-      const mean = near.reduce((s, j) => s + dist[i][j], 0) / near.length;
-      if (near.length > bestCount || (near.length === bestCount && mean < bestMean)) {
-        center = i;
-        bestCount = near.length;
-        bestMean = mean;
-      }
-    }
-    const members = [...left].filter((j) => dist[center][j] <= radius);
-    members.forEach((j) => left.delete(j));
-    members.sort((a, b) => a - b);
+  const radius = patternRadius(dist, candidates);
+  const clusters: PatternCluster[] = clusterBySimilarity(dist, candidates, radius).map((members) => {
     const run = longestRun(new Set(members), n);
-    clusters.push({ label: '', members, longestRun: run, accepted: members.length >= MIN_PATTERN_REPEATS && run >= MIN_PATTERN_RUN });
-  }
+    return { label: '', members, longestRun: run, accepted: members.length >= MIN_PATTERN_REPEATS && run >= MIN_PATTERN_RUN };
+  });
   clusters.sort((a, b) => b.members.length - a.members.length);
   clusters.forEach((c, k) => {
     c.label = LABELS[k] ?? String(k + 1);

@@ -25,6 +25,15 @@ const DOUBTFUL_GLOBAL = 1.3;
 /** Solo se descartan ejemplos de frases con suficientes, y siempre quedan al menos 3. */
 const MIN_FOR_DOUBT = 4;
 
+/** Representantes que se comparan primero por palabra (el más central y los más distintos). */
+const PROTOS = 3;
+/** Cuántas palabras se afinan con todos sus ejemplos tras la primera pasada. */
+const REFINE = 4;
+/** Con pocas palabras no vale la pena la primera pasada. */
+const TWO_STAGE_MIN_PHRASES = 8;
+/** Las palabras que no pasan a la segunda etapa se cuentan algo más lejos: así nunca le ganan a una afinada. */
+const FAR_INFLATE = 1.1;
+
 export interface Doubtful {
   id?: string;
   phraseId: string;
@@ -45,6 +54,12 @@ export class FewShotClassifier {
   private scale = 1;
   /** Ejemplos que no se usan para comparar porque no se parecen a los demás de su frase. */
   doubtful: Doubtful[] = [];
+  private byPhrase = new Map<string, Prepared[]>();
+  private protos = new Map<string, Prepared[]>();
+  /** Se pueden apagar para comparar velocidad y exactitud en pruebas. */
+  static twoStage = true;
+  /** Cuántas comparaciones DTW hizo en la última lectura. */
+  lastComparisons = 0;
 
   get size() {
     return this.items.length;
@@ -97,6 +112,7 @@ export class FewShotClassifier {
 
     this.items = samples.map((s) => ({ id: s.id, phraseId: s.phraseId, x: this.normalize(s.emb.x) }));
     this.scale = this.estimateScale();
+    this.buildIndex();
   }
 
   private normalize(x: Float32Array): Float32Array {
@@ -111,28 +127,81 @@ export class FewShotClassifier {
 
   /** Mediana de la distancia de cada ejemplo a su vecino más cercano de la misma frase. Además aparta los ejemplos dudosos. */
   private estimateScale(): number {
-    const intra: number[] = [];
-    const inter: number[] = [];
-    const nearestSame: number[] = [];
-    for (let i = 0; i < this.items.length; i++) {
-      let bestSame = Infinity;
-      let bestOther = Infinity;
-      for (let j = 0; j < this.items.length; j++) {
-        if (i === j) continue;
+    const n = this.items.length;
+    const bestSame = new Array<number>(n).fill(Infinity);
+    const bestOther = new Array<number>(n).fill(Infinity);
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
         const d = dtw(this.items[i].x, this.items[j].x, this.L, this.D);
-        if (this.items[i].phraseId === this.items[j].phraseId) bestSame = Math.min(bestSame, d);
-        else bestOther = Math.min(bestOther, d);
+        if (this.items[i].phraseId === this.items[j].phraseId) {
+          if (d < bestSame[i]) bestSame[i] = d;
+          if (d < bestSame[j]) bestSame[j] = d;
+        } else {
+          if (d < bestOther[i]) bestOther[i] = d;
+          if (d < bestOther[j]) bestOther[j] = d;
+        }
       }
-      nearestSame.push(bestSame);
-      if (bestSame < Infinity) intra.push(bestSame);
-      if (bestOther < Infinity) inter.push(bestOther);
     }
+    const intra = bestSame.filter(Number.isFinite);
+    const inter = bestOther.filter(Number.isFinite);
     const median = (a: number[]) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
     let scale = 1;
     if (intra.length) scale = Math.max(median(intra), 1e-3);
     else if (inter.length) scale = Math.max(median(inter) * 0.4, 1e-3);
-    this.dropDoubtful(nearestSame, scale);
+    this.dropDoubtful(bestSame, scale);
     return scale;
+  }
+
+  /** Agrupa los ejemplos por palabra y elige los representantes para la primera pasada. */
+  private buildIndex() {
+    this.byPhrase = new Map();
+    this.protos = new Map();
+    for (const it of this.items) (this.byPhrase.get(it.phraseId) ?? this.byPhrase.set(it.phraseId, []).get(it.phraseId)!).push(it);
+    for (const [id, list] of this.byPhrase) {
+      if (list.length <= PROTOS) {
+        this.protos.set(id, list);
+        continue;
+      }
+      const d = list.map(() => new Array<number>(list.length).fill(0));
+      for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) d[i][j] = d[j][i] = dtw(list[i].x, list[j].x, this.L, this.D);
+      const central = d.map((row) => row.reduce((a, b) => a + b, 0)).reduce((best, v, i, arr) => (v < arr[best] ? i : best), 0);
+      const picked = [central];
+      while (picked.length < PROTOS) {
+        let far = -1;
+        let farD = -1;
+        for (let i = 0; i < list.length; i++) {
+          if (picked.includes(i)) continue;
+          const m = Math.min(...picked.map((k) => d[i][k]));
+          if (m > farD) {
+            farD = m;
+            far = i;
+          }
+        }
+        picked.push(far);
+      }
+      this.protos.set(id, picked.map((i) => list[i]));
+    }
+  }
+
+  private weighted(q: Float32Array, it: Prepared) {
+    this.lastComparisons++;
+    return dtw(q, it.x, this.L, this.D);
+  }
+
+  /** Distancia de la toma a cada palabra: primero contra sus representantes, y con todos sus ejemplos solo las más cercanas. */
+  private scorePhrases(q: Float32Array): { phraseId: string; distance: number }[] {
+    this.lastComparisons = 0;
+    const exact = (list: Prepared[]) => {
+      const ds = list.map((it) => this.weighted(q, it)).sort((a, b) => a - b);
+      return ds.length >= 3 ? (ds[0] + ds[1]) / 2 : ds[0];
+    };
+    if (!FewShotClassifier.twoStage || this.byPhrase.size <= TWO_STAGE_MIN_PHRASES) {
+      return [...this.byPhrase].map(([phraseId, list]) => ({ phraseId, distance: exact(list) }));
+    }
+    const first = [...this.protos]
+      .map(([phraseId, ps]) => ({ phraseId, d: Math.min(...ps.map((p) => this.weighted(q, p))) }))
+      .sort((a, b) => a.d - b.d);
+    return first.map((f, i) => ({ phraseId: f.phraseId, distance: i < REFINE ? exact(this.byPhrase.get(f.phraseId)!) : f.d * FAR_INFLATE }));
   }
 
   private dropDoubtful(nearestSame: number[], scale: number) {
@@ -196,19 +265,8 @@ export class FewShotClassifier {
   closeness(emb: Embedded): { phraseId: string; ratio: number } | null {
     if (!this.items.length || emb.L !== this.L || emb.D !== this.D) return null;
     const q = this.normalize(emb.x);
-    const perPhrase = new Map<string, number[]>();
-    for (const it of this.items) {
-      const d = dtw(q, it.x, this.L, this.D);
-      const list = perPhrase.get(it.phraseId);
-      if (list) list.push(d);
-      else perPhrase.set(it.phraseId, [d]);
-    }
     let best: { phraseId: string; distance: number } | null = null;
-    for (const [phraseId, ds] of perPhrase) {
-      ds.sort((a, b) => a - b);
-      const distance = ds.length >= 3 ? (ds[0] + ds[1]) / 2 : ds[0];
-      if (!best || distance < best.distance) best = { phraseId, distance };
-    }
+    for (const sc of this.scorePhrases(q)) if (!best || sc.distance < best.distance) best = sc;
     return best ? { phraseId: best.phraseId, ratio: best.distance / this.scale } : null;
   }
 
@@ -217,20 +275,7 @@ export class FewShotClassifier {
       return { candidates: [], confidence: 0, ambiguous: true };
     }
     const q = this.normalize(emb.x);
-    const perPhrase = new Map<string, number[]>();
-    for (const it of this.items) {
-      const d = dtw(q, it.x, this.L, this.D);
-      const list = perPhrase.get(it.phraseId);
-      if (list) list.push(d);
-      else perPhrase.set(it.phraseId, [d]);
-    }
-
-    // Promedio de los 2 vecinos más cercanos cuando hay suficientes ejemplos: más estable que uno solo.
-    const scored = [...perPhrase].map(([phraseId, ds]) => {
-      ds.sort((a, b) => a - b);
-      const distance = ds.length >= 3 ? (ds[0] + ds[1]) / 2 : ds[0];
-      return { phraseId, distance };
-    });
+    const scored = this.scorePhrases(q);
     scored.sort((a, b) => a.distance - b.distance);
 
     // La confianza depende de cuánto más lejos está cada rival que la mejor frase (proporción, no
