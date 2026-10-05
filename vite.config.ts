@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
@@ -34,6 +35,16 @@ function serviceWorker(): Plugin {
         .replace('__VERSION__', version)
         .replace('__PRECACHE__', JSON.stringify(['./', ...files]));
       await writeFile(join(outDir, 'sw.js'), sw);
+      // /version.json dice qué commit está publicado, para comprobar que el link está al día.
+      let commit = process.env.VERCEL_GIT_COMMIT_SHA ?? '';
+      if (!commit) {
+        try {
+          commit = execSync('git rev-parse HEAD').toString().trim();
+        } catch {
+          commit = 'desconocido';
+        }
+      }
+      await writeFile(join(outDir, 'version.json'), JSON.stringify({ commit: commit.slice(0, 7), construido: new Date().toISOString() }));
     },
   };
 }
