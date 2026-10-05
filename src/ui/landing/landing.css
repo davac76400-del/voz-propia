@@ -1996,10 +1996,10 @@ form.is-shake { animation: l-shake 0.4s; }
 }
 
 /* Código de verificación */
-.l-code { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
-.l-code__box { width: 100%; min-width: 0; min-height: 60px; padding: 0; border: 1px solid rgb(150 175 230 / 0.3); border-radius: 16px; background: rgb(255 255 255 / 0.06); color: #fff; font: 800 26px/1 var(--l-raleway); text-align: center; caret-color: #3df2a0; transition: border-color 0.2s, background 0.2s, transform 0.2s var(--l-ease); }
+.l-code { display: grid; grid-template-columns: repeat(var(--n, 8), minmax(0, 1fr)); gap: 6px; }
+.l-code__box { width: 100%; min-width: 0; min-height: 56px; padding: 0; border: 1px solid rgb(150 175 230 / 0.3); border-radius: 14px; background: rgb(255 255 255 / 0.06); color: #fff; font: 800 22px/1 var(--l-raleway); text-align: center; caret-color: #3df2a0; transition: border-color 0.2s, background 0.2s, transform 0.2s var(--l-ease); }
 .l-code__box:focus-visible { outline: none; border-color: #3df2a0; background: rgb(255 255 255 / 0.1); box-shadow: 0 0 0 4px rgb(61 242 160 / 0.18); transform: translateY(-2px); }
 .l-code__box:not(:placeholder-shown), .l-code__box[value]:not([value=""]) { border-color: rgb(61 242 160 / 0.6); }
 .l-gate__switch button:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
 .l-gate__switch [data-resend-wait] { color: #8f9bbd; }
-@media (max-width: 380px) { .l-code { gap: 6px; } .l-code__box { min-height: 54px; font-size: 22px; } }
+@media (max-width: 380px) { .l-code { gap: 4px; } .l-code__box { min-height: 50px; font-size: 19px; border-radius: 12px; } }

@@ -2,7 +2,7 @@ import { supabase } from './supabase';
 
 /**
  * Cuentas de Voz Propia con correo y código de verificación (OTP) de Supabase Auth.
- * No hay contraseñas: se escribe el correo, llega un código de 6 dígitos y se ingresa.
+ * No hay contraseñas: se escribe el correo, llega un código de 8 números y se ingresa.
  * «Entrar sin cuenta» abre una sesión de invitado que no se guarda.
  */
 
@@ -34,7 +34,9 @@ const write = (s: Session | null) => {
 
 const clean = (email: string) => email.trim().toLowerCase();
 export const validEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(clean(email));
-export const CODE_LENGTH = 6;
+export const CODE_LENGTH = 8;
+
+const DISPOSABLE = new Set(['mailinator.com', 'guerrillamail.com', '10minutemail.com', 'tempmail.com', 'temp-mail.org', 'yopmail.com', 'trashmail.com', 'sharklasers.com', 'getnada.com', 'dispostable.com', 'maildrop.cc', 'throwawaymail.com']);
 
 const TYPOS: Record<string, string> = {
   'gmial.com': 'gmail.com', 'gmai.com': 'gmail.com', 'gmail.con': 'gmail.com', 'gmal.com': 'gmail.com', 'gnail.com': 'gmail.com',
@@ -47,6 +49,7 @@ export async function checkEmail(email: string): Promise<void> {
   const e = clean(email);
   if (!validEmail(e)) throw new Error('Ese correo no parece válido.');
   const domain = e.split('@')[1];
+  if (DISPOSABLE.has(domain)) throw new Error('Usa un correo tuyo de verdad, no uno temporal.');
   if (TYPOS[domain]) throw new Error(`¿Quisiste decir ${e.split('@')[0]}@${TYPOS[domain]}?`);
   try {
     const r = await fetch(`https://dns.google/resolve?name=${encodeURIComponent(domain)}&type=MX`, { signal: AbortSignal.timeout(4000) });

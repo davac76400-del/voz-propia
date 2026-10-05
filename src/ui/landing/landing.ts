@@ -360,7 +360,7 @@ function template() {
           <button class="l-gate__back" type="button" data-code-back>${icon('arrow-left', 18, 2.4)}<span>Cambiar correo</span></button>
           <h2>Revisa tu correo</h2>
           <p class="l-gate__p">Escribe el código de ${CODE_LENGTH} números que mandamos a <b data-code-mail></b>.</p>
-          <div class="l-code" data-code role="group" aria-label="Código de ${CODE_LENGTH} números">
+          <div class="l-code" style="--n:${CODE_LENGTH}" data-code role="group" aria-label="Código de ${CODE_LENGTH} números">
             ${Array.from({ length: CODE_LENGTH }, (_, i) => `<input class="l-code__box" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="${CODE_LENGTH}" autocomplete="${i === 0 ? 'one-time-code' : 'off'}" aria-label="Número ${i + 1}" data-box="${i}">`).join('')}
           </div>
           <p class="l-gate__err" data-err aria-live="polite"></p>

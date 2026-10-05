@@ -1,4 +1,4 @@
-// Send Email Hook de Supabase Auth: manda por Resend el código de 6 números con el diseño de Voz Propia.
+// Send Email Hook de Supabase Auth: manda por Resend el código de 8 números con el diseño de Voz Propia.
 // Despliegue (sin verificación JWT: la autenticidad se comprueba con la firma del hook):
 //   supabase functions deploy enviar-correo --no-verify-jwt --project-ref <ref>
 //   supabase secrets set RESEND_API_KEY=re_... RESEND_FROM_EMAIL="Voz Propia <hola@tudominio.com>" SEND_EMAIL_HOOK_SECRET="v1,whsec_..."

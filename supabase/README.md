@@ -1,4 +1,4 @@
-# Cuentas con correo (código de 6 números)
+# Cuentas con correo (código de 8 números)
 
 La app usa **Supabase Auth con código por correo (OTP)**. Para que el correo llegue a cualquier persona hay que
 configurar Supabase una sola vez. Hay dos caminos; elige **A** (más simple).
