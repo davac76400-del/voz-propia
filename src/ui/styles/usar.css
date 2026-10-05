@@ -1068,3 +1068,51 @@
   align-items: center;
   gap: 10px 14px;
 }
+
+/* Palabras tocables y por confirmar */
+.u-sent {
+  display: inline;
+}
+
+button.u-w {
+  padding: 0 2px;
+  margin: 0;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+  transition: background-color 0.18s var(--ease-out), transform 0.18s var(--ease-out);
+}
+
+button.u-w:hover {
+  background: rgb(255 255 255 / 0.09);
+}
+
+button.u-w:active {
+  transform: scale(0.97);
+}
+
+button.u-w:focus-visible {
+  outline: 3px solid var(--t-a2);
+  outline-offset: 2px;
+}
+
+button.u-w.is-pending {
+  color: rgb(255 255 255 / 0.62);
+  text-decoration: underline dashed rgb(255 255 255 / 0.55) 3px;
+  text-underline-offset: 0.14em;
+}
+
+button.u-w.is-pending sup {
+  margin-left: 2px;
+  color: var(--t-a2);
+  font-size: 0.45em;
+  font-weight: 800;
+  vertical-align: 0.9em;
+}
+
+.u-opt.is-current {
+  border-color: var(--t-a2);
+}

@@ -3,6 +3,8 @@ import { FewShotClassifier, type Embedded } from './learn/classifier';
 import { NeuralEncoder } from './learn/neural-encoder';
 import { mouthActivity, prepareFrames } from './learn/embed';
 import { TARGET_LEN, withDeltas } from './learn/sequence';
+import { sliceSequence, WordDecoder, type DecodedWord } from './learn/decoder';
+import { bigramBonus } from './language/spanish';
 import { db, uid } from './storage/db';
 import type { LipSequence, Phrase, Prediction, Sample } from './types';
 import { DEFAULT_PHRASES } from '../data/default-phrases';
@@ -75,12 +77,16 @@ class Engine {
     return { x: withDeltas(fixed, TARGET_LEN, D), L: TARGET_LEN, D: D * 2 };
   }
 
+  private decoder = new WordDecoder();
+  private decoderStale = true;
+
   private async retrain() {
     const valid = new Set(this.phrases.map((p) => p.id));
     const embedded = await Promise.all(
       this.samples.filter((s) => valid.has(s.phraseId)).map(async (s) => ({ phraseId: s.phraseId, emb: await this.embed(s.seq) })),
     );
     this.classifier.fit(embedded);
+    this.decoderStale = true;
     this.emit();
   }
 
@@ -108,8 +114,35 @@ class Engine {
     const r = this.classifier.closeness(await this.embed(seq));
     const phrase = r && this.phrase(r.phraseId);
     if (!r || !phrase) return null;
-    const personal = this.samples.filter((x) => x.phraseId === phrase.id && !x.id.startsWith(SHARED_PREFIX)).length;
-    return { phrase, ratio: r.ratio, personal };
+    return { phrase, ratio: r.ratio, personal: this.personalCount(phrase.id) };
+  }
+
+  /** Cuántos ejemplos de esta frase son de esta persona (los demás vienen del programador). */
+  personalCount(phraseId: string) {
+    return this.samples.filter((x) => x.phraseId === phraseId && !x.id.startsWith(SHARED_PREFIX)).length;
+  }
+
+  /** Hasta cuánto se acepta una palabra sin preguntar; con ejemplos propios se exige más. */
+  limitFor(phraseId: string) {
+    return this.personalCount(phraseId) >= 3 ? 2.2 : 2.8;
+  }
+
+  /**
+   * Lee una toma con una o varias palabras seguidas. Cada palabra trae sus alternativas y si es segura;
+   * las poco seguras quedan por confirmar en vez de escribirse.
+   */
+  async decode(seq: LipSequence): Promise<(DecodedWord & { seq: LipSequence })[]> {
+    if (this.decoderStale) {
+      const valid = new Set(this.phrases.map((p) => p.id));
+      this.decoder.fit(this.samples.filter((s) => valid.has(s.phraseId)).map((s) => ({ phraseId: s.phraseId, seq: s.seq })));
+      this.decoderStale = false;
+    }
+    const words = await this.decoder.decode(seq, {
+      limitFor: (id) => this.limitFor(id),
+      searchFactor: 1.35,
+      bonus: (prev, id) => bigramBonus(prev ? (this.phrase(prev)?.text ?? null) : null, this.phrase(id)?.text ?? ''),
+    });
+    return words.map((w) => ({ ...w, seq: sliceSequence(seq, w.start, w.end) }));
   }
 
   /** Cuánto se movieron los labios en la toma; 0 si se quedó quieta. */

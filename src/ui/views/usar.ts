@@ -2,9 +2,10 @@ import { go } from '../../app/router';
 import { pushHistory, state } from '../../app/state';
 import { engine } from '../../core/engine';
 import { syncShared } from '../../core/shared-sync';
-import type { LipSequence, Phrase, Prediction } from '../../core/types';
+import { composeSentence, spokenText } from '../../core/language/spanish';
+import type { LipSequence, Phrase } from '../../core/types';
 import { captureSequence, CaptureError, type Capture } from '../../core/vision/recorder';
-import { speakPhrase } from '../../core/voice/speaker';
+import { speakPhrase, speakText } from '../../core/voice/speaker';
 import { createStage } from '../components/camera-stage';
 import { bindPalette, paletteHTML } from '../components/theme';
 import { toast } from '../components/toast';
@@ -102,7 +103,7 @@ export function usarView(root: HTMLElement) {
   let mode: Screen = 'empty';
   let capture: Capture | null = null;
   let lastSeq: LipSequence | null = null;
-  let lastPred: Prediction | null = null;
+  let menuAt: { si: number; wi: number } | null = null;
   let eq: HTMLElement[] = [];
   let raf = 0;
   let seen: Set<string> | null = null;
@@ -118,18 +119,47 @@ export function usarView(root: HTMLElement) {
     eq = Array.from(screen.querySelectorAll<HTMLElement>('.u-eq i'));
   };
 
-  /* Texto que se va escribiendo: solo entran las palabras que se leyeron bien. */
-  const said: { id: string; text: string }[] = [];
+  /* Texto que se va escribiendo: cada toma es una frase; las palabras poco seguras quedan por confirmar con «?». */
+  interface SWord {
+    id: string;
+    text: string;
+    pending: boolean;
+    alts: string[];
+    seq: LipSequence | null;
+  }
+  const sentences: SWord[][] = [];
+  const tokensOf = (sent: SWord[]) => composeSentence(sent.map((w) => w.text));
 
-  const renderPaper = (popLast = false) => {
-    tools.hidden = said.length === 0;
-    paper.classList.toggle('has-words', said.length > 0);
-    paper.innerHTML = said.length
-      ? `<p class="u-text">${said
-          .map((w, i) => `<span class="u-w${popLast && i === said.length - 1 ? ' is-pop' : ''}">${esc(w.text)}</span>`)
+  const renderPaper = (popSentence = -1) => {
+    tools.hidden = sentences.length === 0;
+    paper.classList.toggle('has-words', sentences.length > 0);
+    paper.innerHTML = sentences.length
+      ? `<p class="u-text">${sentences
+          .map((sent, si) => {
+            const tokens = tokensOf(sent);
+            return `<span class="u-sent">${sent
+              .map(
+                (w, wi) =>
+                  `<button type="button" class="u-w${w.pending ? ' is-pending' : ''}${si === popSentence ? ' is-pop' : ''}" data-w="${si}:${wi}" style="--i:${wi}" aria-label="${esc(w.text)}${w.pending ? ', por confirmar' : ''}. Toca para corregir">${esc(tokens[wi])}${w.pending ? '<sup>?</sup>' : ''}</button>`,
+              )
+              .join(' ')}</span>`;
+          })
           .join(' ')}<i class="u-caret" aria-hidden="true"></i></p>`
       : `<p class="u-placeholder">Aquí se escribe lo que digas<i class="u-caret" aria-hidden="true"></i></p>`;
     paper.scrollTop = paper.scrollHeight;
+  };
+
+  /** Dice una frase: solo las palabras confirmadas. */
+  const speakSentence = async (sent: SWord[]) => {
+    const ok = sent.filter((w) => !w.pending);
+    if (!ok.length) return;
+    vibrate(18);
+    for (const w of ok) pushHistory(w.id);
+    if (ok.length === 1) {
+      const p = engine.phrase(ok[0].id);
+      if (p) return void (await speakPhrase(p, state.settings));
+    }
+    await speakText(spokenText(composeSentence(ok.map((w) => w.text))), state.settings);
   };
 
   const renderEmpty = () =>
@@ -137,7 +167,7 @@ export function usarView(root: HTMLElement) {
 
   const renderIdle = () => {
     if (!trained().length) return renderEmpty();
-    setScreen('idle', `<p class="u-st u-st--mute">Toca el botón y di una palabra moviendo los labios.</p>`);
+    setScreen('idle', `<p class="u-st u-st--mute">${trained().length > 1 ? 'Toca el botón y di una frase moviendo los labios: «sí me duele», por ejemplo.' : 'Toca el botón y di una palabra moviendo los labios.'}</p>`);
   };
 
   const renderListening = () =>
@@ -146,14 +176,14 @@ export function usarView(root: HTMLElement) {
       `<div class="u-listen"><div class="u-eq" aria-hidden="true">${'<i></i>'.repeat(BARS)}</div><p class="u-st">Te estoy viendo…</p></div>`,
     );
 
-  const renderSaid = (p: Phrase, match: number, corrected = false) => {
-    said.push({ id: p.id, text: p.text });
-    renderPaper(true);
-    const pct = Math.round(match * 100);
+  const renderSaid = (sent: SWord[], note: string) => {
+    sentences.push(sent);
+    renderPaper(sentences.length - 1);
+    const pending = sent.some((w) => w.pending);
     setScreen(
       'said',
-      `<p class="u-st u-st--ok"><span class="u-check" aria-hidden="true">${icon('check', 16, 3)}</span>${
-        corrected ? 'Aprendido, gracias' : `Se parece ${pct}%`
+      `<p class="u-st ${pending ? 'u-st--miss' : 'u-st--ok'}">${
+        pending ? '<b>Casi.</b> Toca las palabras con ? para confirmarlas.' : `<span class="u-check" aria-hidden="true">${icon('check', 16, 3)}</span>${esc(note)}`
       }</p>`,
     );
   };
@@ -164,9 +194,7 @@ export function usarView(root: HTMLElement) {
       `<div class="u-miss2"><p class="u-st u-st--miss"><b>${esc(title)}.</b> ${esc(detail)}</p>${
         guess
           ? `<button class="u-pill u-pill--ghost" type="button" data-confirm="${guess.id}">${icon('check', 16, 2.6)}<span>Sí dije «${esc(guess.text)}»</span></button>`
-          : lastPred?.candidates.length
-            ? `<button class="u-pill u-pill--ghost" type="button" data-choose>${icon('help', 16, 2.2)}<span>Elegir la palabra</span></button>`
-            : ''
+          : ''
       }</div>`,
     );
     vibrate([20, 40, 20]);
@@ -200,7 +228,7 @@ export function usarView(root: HTMLElement) {
   const renderReady = () => {
     const n = trained().length;
     btn.disabled = n === 0;
-    if (!capture) label.textContent = n ? 'Toca y di una palabra' : 'Esperando la primera palabra';
+    if (!capture) label.textContent = n > 1 ? 'Toca y di una frase' : n ? 'Toca y di una palabra' : 'Esperando la primera palabra';
     if (mode === 'empty' || mode === 'idle') renderIdle();
     else if (!n) renderEmpty();
   };
@@ -211,8 +239,8 @@ export function usarView(root: HTMLElement) {
     btn.classList.toggle('is-live', live);
     stage.setRecording(live);
     el.classList.toggle('is-listening', live);
-    label.textContent = live ? 'Leyendo tus labios…' : 'Toca y di una palabra';
-    hint.textContent = live ? 'Toca otra vez para terminar.' : 'Sin voz, solo mueve los labios. Se detiene sola.';
+    label.textContent = live ? 'Leyendo tus labios…' : trained().length > 1 ? 'Toca y di una frase' : 'Toca y di una palabra';
+    hint.textContent = live ? 'Toca otra vez para terminar.' : trained().length > 1 ? 'Sin voz. Puedes juntar varias palabras, con o sin pausas.' : 'Sin voz, solo mueve los labios. Se detiene sola.';
     if (!live) ring.style.strokeDashoffset = String(RING);
   };
 
@@ -228,41 +256,42 @@ export function usarView(root: HTMLElement) {
   };
   raf = requestAnimationFrame(loop);
 
-  const say = async (p: Phrase) => {
-    pushHistory(p.id);
-    vibrate(18);
-    await speakPhrase(p, state.settings);
-  };
-
-  const showOptions = (pred: Prediction) => {
-    const cards = pred.candidates
-      .map((c, i) => {
-        const p = engine.phrase(c.phraseId);
+  const showWordMenu = (si: number, wi: number) => {
+    const w = sentences[si]?.[wi];
+    if (!w) return;
+    menuAt = { si, wi };
+    const ids = [w.id, ...w.alts.filter((a) => a !== w.id)];
+    const cards = ids
+      .map((id, i) => {
+        const p = engine.phrase(id);
         if (!p) return '';
-        return `<button class="u-opt" type="button" data-pick="${p.id}" style="--i:${i}">
+        return `<button class="u-opt${id === w.id && !w.pending ? ' is-current' : ''}" type="button" data-wpick="${p.id}" style="--i:${i}">
           <span class="sphere sphere--sm sphere--${p.category}">${icon(p.icon, 20)}</span>
           <span class="u-opt__t">${esc(p.text)}</span>
-          <span class="u-opt__p">${Math.round(c.probability * 100)}%</span>
+          <span class="u-opt__p">${id === w.id ? (w.pending ? 'Confirmar' : 'Actual') : ''}</span>
         </button>`;
       })
       .join('');
     options.innerHTML = `
-      <div class="u-opts" role="dialog" aria-label="¿Cuál quisiste decir?">
-        <p class="u-opts__t">No estoy seguro. ¿Cuál quisiste decir?</p>
+      <div class="u-opts" role="dialog" aria-label="¿Cuál dijiste?">
+        <p class="u-opts__t">¿Cuál dijiste?</p>
         <div class="u-opts__list">${cards}</div>
         <div class="u-opts__foot">
-          <button class="u-pill u-pill--ghost" type="button" data-retry>${icon('rotate-ccw', 16)}<span>Repetir</span></button>
-          <button class="u-pill u-pill--ghost" type="button" data-dismiss>${icon('x', 16)}<span>Ninguna</span></button>
+          <button class="u-pill u-pill--ghost" type="button" data-wdel>${icon('x', 16)}<span>Quitar esta palabra</span></button>
+          <button class="u-pill u-pill--ghost" type="button" data-dismiss>${icon('check', 16)}<span>Cerrar</span></button>
         </div>
       </div>`;
     options.hidden = false;
-    (options.querySelector('[data-pick]') as HTMLElement | null)?.focus({ preventScroll: true });
+    (options.querySelector('[data-wpick]') as HTMLElement | null)?.focus({ preventScroll: true });
   };
 
   const hideOptions = () => {
     options.hidden = true;
     options.innerHTML = '';
+    menuAt = null;
   };
+
+  const sword = (p: Phrase, pending: boolean, alts: string[] = [], seq: LipSequence | null = null): SWord => ({ id: p.id, text: p.text, pending, alts, seq });
 
   const startCapture = async () => {
     if (capture) return capture.stop();
@@ -278,9 +307,12 @@ export function usarView(root: HTMLElement) {
       return;
     }
     vibrate(12);
-    const maxMs = state.settings.maxCaptureMs;
+    const multi = trained().length > 1;
+    // Con varias palabras se da más tiempo y se espera más silencio para terminar.
+    const maxMs = multi ? Math.max(state.settings.maxCaptureMs, 8000) : state.settings.maxCaptureMs;
     capture = captureSequence({
       maxMs,
+      quietMs: multi ? 1500 : undefined,
       autoStop: true,
       onProgress: (elapsed) => {
         ring.style.strokeDashoffset = String(RING * (1 - Math.min(1, elapsed / maxMs)));
@@ -292,37 +324,48 @@ export function usarView(root: HTMLElement) {
       const seq = await capture.result;
       lastSeq = seq;
       const list = trained();
-      lastPred = null;
       if (engine.activity(seq) < MIN_ACTIVITY) {
         renderMiss('No vi que movieras los labios', 'Dilo moviendo bien la boca, de frente a la cámara.');
         return;
       }
-      const v = await engine.verify(seq);
-      const limit = v && v.personal >= 3 ? VERIFY_LIMIT_PERSONAL : VERIFY_LIMIT;
-      // Primero se comprueba que se parezca de verdad a una palabra; si no, no se escribe nada.
-      if (!v || v.ratio > limit) {
-        if (list.length > 1) lastPred = await engine.recognize(seq, state.settings.autoSpeakThreshold);
-        renderMiss('No te entendí', 'Repítelo con calma, de frente y con buena luz. No escribo nada si no estoy seguro.', list.length === 1 ? v?.phrase : null);
-        return;
-      }
-      let phrase = v.phrase;
-      if (list.length > 1) {
-        const pred = await engine.recognize(seq, state.settings.autoSpeakThreshold);
-        lastPred = pred;
-        const top = pred.candidates[0] && engine.phrase(pred.candidates[0].phraseId);
-        if (!top || pred.ambiguous) {
-          renderIdle();
-          if (pred.candidates.length) showOptions(pred);
-          else renderMiss('No te entendí', 'Intenta otra vez.');
+      if (list.length === 1) {
+        // Una sola palabra: se acepta solo si se parece de verdad a sus ejemplos.
+        const v = await engine.verify(seq);
+        const limit = v && v.personal >= 3 ? VERIFY_LIMIT_PERSONAL : VERIFY_LIMIT;
+        if (!v || v.ratio > limit) {
+          renderMiss('No te entendí', 'Repítelo con calma, de frente y con buena luz. No escribo nada si no estoy seguro.', v?.phrase);
           return;
         }
-        phrase = top;
+        const match = Math.max(0.6, Math.min(1, 1 - ((v.ratio - 1) / (limit - 1)) * 0.4));
+        const sent = [sword(v.phrase, false)];
+        renderSaid(sent, `Se parece ${Math.round(match * 100)}%`);
+        void speakSentence(sent);
+        if (v.ratio <= LEARN_RATIO && state.settings.learnFromUse) void engine.addSample(v.phrase.id, seq, 'correccion');
+        return;
       }
-      const match = Math.max(0.6, Math.min(1, 1 - ((v.ratio - 1) / (limit - 1)) * 0.4));
-      renderSaid(phrase, match);
-      void say(phrase);
-      // Lectura muy segura: se aprende de cómo habla esta persona para acertar cada vez mejor.
-      if (v.ratio <= LEARN_RATIO && state.settings.learnFromUse) void engine.addSample(phrase.id, seq, 'correccion');
+
+      // Varias palabras: se separa la toma en palabras y se arma la frase completa.
+      setScreen('listening', `<p class="u-st"><span class="u-dots" aria-hidden="true"><i></i><i></i><i></i></span> Armando tu frase…</p>`);
+      const words = await engine.decode(seq);
+      const sent: SWord[] = [];
+      for (const w of words) {
+        const p = engine.phrase(w.phraseId);
+        if (p) sent.push(sword(p, !w.confident, [w.phraseId, ...w.alts.map((a) => a.phraseId)], w.seq));
+      }
+      if (!sent.length) {
+        renderMiss('No te entendí', 'Repítelo con calma, de frente y con buena luz. No escribo nada si no estoy seguro.');
+        return;
+      }
+      renderSaid(sent, sent.length === 1 ? 'Palabra lista' : `Frase lista · ${sent.length} palabras`);
+      if (sent.every((w) => !w.pending)) void speakSentence(sent);
+      // Lo que se leyó con mucha seguridad enseña a la app cómo hablas tú.
+      if (state.settings.learnFromUse) {
+        const sure = new Map<string, LipSequence[]>();
+        words.forEach((w, i) => {
+          if (w.confident && w.ratio <= LEARN_RATIO) (sure.get(sent[i].id) ?? sure.set(sent[i].id, []).get(sent[i].id)!).push(w.seq);
+        });
+        for (const [id, seqs] of sure) void engine.addSamples(id, seqs, 'correccion');
+      }
     } catch (err) {
       if (err instanceof CaptureError && err.code === 'sin-rostro') {
         renderMiss('Perdí de vista tu boca', 'Intenta de nuevo con la cara centrada y sin taparte la boca.');
@@ -348,57 +391,60 @@ export function usarView(root: HTMLElement) {
     on(root, 'click', '[data-capture]', () => void startCapture()),
     on(root, 'click', '[data-say]', (_, b) => {
       const p = engine.phrase(b.dataset.say!);
-      if (p) void say(p);
-    }),
-    on(root, 'click', '[data-repeat]', (_, b) => {
-      const p = engine.phrase(b.dataset.repeat!);
-      if (p) void say(p);
+      if (p) void speakSentence([sword(p, false)]);
     }),
     on(root, 'click', '[data-confirm]', async (_, b) => {
       const p = engine.phrase(b.dataset.confirm!);
       if (!p) return;
-      renderSaid(p, 1, true);
-      void say(p);
-      if (lastSeq) {
-        const seq = lastSeq;
+      const seq = lastSeq;
+      const sent = [sword(p, false, [], seq)];
+      renderSaid(sent, 'Aprendido, gracias');
+      void speakSentence(sent);
+      if (seq) {
         lastSeq = null;
         await engine.addSample(p.id, seq, 'correccion');
       }
     }),
-    on(root, 'click', '[data-choose]', () => {
-      if (lastPred) showOptions(lastPred);
+    on(root, 'click', '[data-w]', (_, b) => {
+      const [si, wi] = b.dataset.w!.split(':').map(Number);
+      showWordMenu(si, wi);
+    }),
+    on(root, 'click', '[data-wpick]', async (_, b) => {
+      const at = menuAt;
+      const w = at && sentences[at.si]?.[at.wi];
+      const p = engine.phrase(b.dataset.wpick!);
+      if (!at || !w || !p) return;
+      hideOptions();
+      const changed = p.id !== w.id;
+      w.id = p.id;
+      w.text = p.text;
+      w.pending = false;
+      renderPaper();
+      const sent = sentences[at.si];
+      if (sent.every((x) => !x.pending)) {
+        setScreen('said', `<p class="u-st u-st--ok"><span class="u-check" aria-hidden="true">${icon('check', 16, 3)}</span>${changed ? 'Corregido, gracias' : 'Confirmado'}</p>`);
+        void speakSentence(sent);
+      }
+      // Lo que la persona confirma o corrige enseña a la app cómo habla.
+      if (w.seq && state.settings.learnFromUse) await engine.addSample(p.id, w.seq, 'correccion');
+    }),
+    on(root, 'click', '[data-wdel]', () => {
+      const at = menuAt;
+      if (!at) return;
+      hideOptions();
+      sentences[at.si]?.splice(at.wi, 1);
+      if (!sentences[at.si]?.length) sentences.splice(at.si, 1);
+      renderPaper();
     }),
     on(root, 'click', '[data-clear]', () => {
-      said.length = 0;
+      sentences.length = 0;
       renderPaper();
       renderIdle();
     }),
     on(root, 'click', '[data-speak-all]', async () => {
-      for (const w of said) {
-        const p = engine.phrase(w.id);
-        if (p) await speakPhrase(p, state.settings);
-      }
+      for (const sent of sentences) await speakSentence(sent);
     }),
-    on(root, 'click', '[data-pick]', async (_, b) => {
-      const p = engine.phrase(b.dataset.pick!);
-      if (!p) return;
-      hideOptions();
-      const wasTop = lastPred?.candidates[0]?.phraseId === p.id;
-      renderSaid(p, 1, !wasTop);
-      void say(p);
-      if (lastSeq && state.settings.learnFromUse) {
-        await engine.addSample(p.id, lastSeq, 'correccion');
-        lastSeq = null;
-      }
-    }),
-    on(root, 'click', '[data-retry]', () => {
-      hideOptions();
-      void startCapture();
-    }),
-    on(root, 'click', '[data-dismiss]', () => {
-      hideOptions();
-      renderIdle();
-    }),
+    on(root, 'click', '[data-dismiss]', () => hideOptions()),
     engine.onChange(() => {
       renderWords();
       renderReady();

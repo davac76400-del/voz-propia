@@ -48,14 +48,14 @@ export function speakerNormalize(x: Float32Array, T: number, D: number, split = 
 }
 
 /** Cuadros → vector comparable de longitud fija. Es el único camino de lectura de labios. */
-export function prepareFrames(frames: Float32Array, D: number, opts: EmbedOptions = {}): { fixed: Float32Array; L: number } {
+export function prepareFrames(frames: Float32Array, D: number, opts: EmbedOptions = {}, len = TARGET_LEN): { fixed: Float32Array; L: number } {
   let T = frames.length / D;
   let x = opts.smooth ? smoothSeq(frames, T, D) : frames;
   const trimmed = trimStill(x, T, D);
   x = trimmed.x;
   T = trimmed.T;
   if (opts.speaker) x = speakerNormalize(x, T, D);
-  return { fixed: resample(x, T, D), L: TARGET_LEN };
+  return { fixed: resample(x, T, D, len), L: len };
 }
 
 export function embedFrames(frames: Float32Array, D: number, opts: EmbedOptions = {}) {

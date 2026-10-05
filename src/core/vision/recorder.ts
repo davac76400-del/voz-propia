@@ -4,6 +4,8 @@ import { tracker } from './face-tracker';
 
 export interface CaptureOptions {
   maxMs: number;
+  /** Cuánto silencio de labios termina la toma (más largo si se dicen varias palabras). */
+  quietMs?: number;
   /** Termina sola cuando la boca deja de moverse después de haber hablado. */
   autoStop?: boolean;
   onProgress?: (elapsed: number, openness: number, faceVisible: boolean) => void;
@@ -67,7 +69,7 @@ export function captureSequence(opts: CaptureOptions): Capture {
         prevOpen = f.openness;
       }
       opts.onProgress?.(elapsed, f.openness, !!f.features);
-      if (opts.autoStop && spoke && f.t - lastActive > QUIET_MS && elapsed > 900) finish();
+      if (opts.autoStop && spoke && f.t - lastActive > (opts.quietMs ?? QUIET_MS) && elapsed > 900) finish();
       else if (elapsed >= opts.maxMs) finish();
     });
   });
