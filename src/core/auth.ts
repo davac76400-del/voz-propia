@@ -36,6 +36,27 @@ const clean = (email: string) => email.trim().toLowerCase();
 export const validEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(clean(email));
 export const CODE_LENGTH = 6;
 
+const TYPOS: Record<string, string> = {
+  'gmial.com': 'gmail.com', 'gmai.com': 'gmail.com', 'gmail.con': 'gmail.com', 'gmal.com': 'gmail.com', 'gnail.com': 'gmail.com',
+  'hotmial.com': 'hotmail.com', 'hotmai.com': 'hotmail.com', 'hotmail.con': 'hotmail.com', 'outlok.com': 'outlook.com',
+  'outlook.con': 'outlook.com', 'yaho.com': 'yahoo.com', 'yahoo.con': 'yahoo.com', 'icloud.con': 'icloud.com',
+};
+
+/** Revisa que el correo exista de verdad: formato, errores comunes y que su dominio reciba correo (MX). */
+export async function checkEmail(email: string): Promise<void> {
+  const e = clean(email);
+  if (!validEmail(e)) throw new Error('Ese correo no parece válido.');
+  const domain = e.split('@')[1];
+  if (TYPOS[domain]) throw new Error(`¿Quisiste decir ${e.split('@')[0]}@${TYPOS[domain]}?`);
+  try {
+    const r = await fetch(`https://dns.google/resolve?name=${encodeURIComponent(domain)}&type=MX`, { signal: AbortSignal.timeout(4000) });
+    const j = (await r.json()) as { Status?: number; Answer?: unknown[] };
+    if (j.Status === 3 || (j.Status === 0 && !j.Answer?.length)) throw new Error('Ese dominio no recibe correos. Revisa que esté bien escrito.');
+  } catch (x) {
+    if (x instanceof Error && x.message.startsWith('Ese dominio')) throw x;
+  }
+}
+
 /** Sesión actual, leída al instante. La de cuenta se comprueba contra Supabase en segundo plano. */
 export function session(): Session | null {
   if (current) return current;
@@ -64,7 +85,8 @@ function explain(message: string): string {
   if (m.includes('signups not allowed') || m.includes('user not found') || m.includes('not found')) return 'No hay una cuenta con ese correo. Crea una.';
   if (m.includes('expired') || m.includes('invalid')) return 'El código no es correcto o ya venció. Pide uno nuevo.';
   if (m.includes('failed to fetch') || m.includes('network')) return 'Sin conexión. Revisa tu internet e inténtalo otra vez.';
-  if (m.includes('error sending') || m.includes('smtp')) return 'No se pudo enviar el correo. Inténtalo en unos minutos.';
+  if (m.includes('error sending') || m.includes('smtp') || m.includes('unexpected_failure') || m.includes('domain'))
+    return 'El servidor de correo no puede enviar a esta dirección todavía (falta verificar el dominio de envío). Esperar no lo arregla.';
   return 'No se pudo completar. Intenta otra vez.';
 }
 
@@ -72,7 +94,7 @@ function explain(message: string): string {
 export async function requestCode(email: string, name?: string): Promise<void> {
   const e = clean(email);
   if (name !== undefined && !name.trim()) throw new Error('Escribe tu nombre.');
-  if (!validEmail(e)) throw new Error('Ese correo no parece válido.');
+  await checkEmail(e);
   const { error } = await supabase.auth.signInWithOtp({
     email: e,
     options: name !== undefined ? { shouldCreateUser: true, data: { name: name.trim() } } : { shouldCreateUser: false },
