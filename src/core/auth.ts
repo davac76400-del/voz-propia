@@ -1,7 +1,9 @@
+import { supabase } from './supabase';
+
 /**
- * Cuentas de Voz Propia, guardadas en este dispositivo (no hay servidor todavía).
- * La contraseña nunca se guarda: solo su huella (PBKDF2 con sal propia).
- * «Entrar sin correo» abre una sesión de invitado que no se guarda.
+ * Cuentas de Voz Propia con correo y código de verificación (OTP) de Supabase Auth.
+ * No hay contraseñas: se escribe el correo, llega un código de 6 dígitos y se ingresa.
+ * «Entrar sin cuenta» abre una sesión de invitado que no se guarda.
  */
 
 export interface Session {
@@ -10,72 +12,86 @@ export interface Session {
   email?: string;
 }
 
-interface Stored {
-  name: string;
-  salt: string;
-  hash: string;
-}
-
-const KEY_USERS = 'voz-propia:cuentas';
 const KEY_SESSION = 'voz-propia:sesion';
-const ITER = 120_000;
-
 let current: Session | null = null;
 
-const read = <T>(k: string, fb: T): T => {
+const read = (): Session | null => {
   try {
-    const v = localStorage.getItem(k);
-    return v ? (JSON.parse(v) as T) : fb;
+    const v = localStorage.getItem(KEY_SESSION);
+    return v ? (JSON.parse(v) as Session) : null;
   } catch {
-    return fb;
+    return null;
   }
 };
-const write = (k: string, v: unknown) => {
+const write = (s: Session | null) => {
   try {
-    localStorage.setItem(k, JSON.stringify(v));
-    return true;
+    if (s) localStorage.setItem(KEY_SESSION, JSON.stringify(s));
+    else localStorage.removeItem(KEY_SESSION);
   } catch {
-    return false;
+    /* sin almacenamiento: la cuenta sigue en memoria mientras la página esté abierta */
   }
 };
-
-const hex = (b: ArrayBuffer) => Array.from(new Uint8Array(b), (x) => x.toString(16).padStart(2, '0')).join('');
-
-async function derive(password: string, salt: string) {
-  if (!crypto?.subtle) throw new Error('Este navegador no permite crear cuentas seguras aquí.');
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(salt), iterations: ITER }, key, 256);
-  return hex(bits);
-}
 
 const clean = (email: string) => email.trim().toLowerCase();
 export const validEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(clean(email));
+export const CODE_LENGTH = 6;
 
+/** Sesión actual, leída al instante. La de cuenta se comprueba contra Supabase en segundo plano. */
 export function session(): Session | null {
   if (current) return current;
-  const s = read<Session | null>(KEY_SESSION, null);
+  const s = read();
   if (s && s.kind === 'cuenta' && typeof s.name === 'string') current = s;
   return current;
 }
 
-export async function signUp(name: string, email: string, password: string): Promise<Session> {
-  const e = clean(email);
-  if (!name.trim()) throw new Error('Escribe tu nombre.');
-  if (!validEmail(e)) throw new Error('Ese correo no parece válido.');
-  if (password.length < 6) throw new Error('La contraseña necesita al menos 6 caracteres.');
-  const users = read<Record<string, Stored>>(KEY_USERS, {});
-  if (users[e]) throw new Error('Ya hay una cuenta con ese correo. Inicia sesión.');
-  const salt = hex(crypto.getRandomValues(new Uint8Array(16)).buffer);
-  users[e] = { name: name.trim(), salt, hash: await derive(password, salt) };
-  if (!write(KEY_USERS, users)) throw new Error('Este navegador no deja guardar cuentas. Entra sin correo.');
-  return start({ kind: 'cuenta', name: name.trim(), email: e });
+// Si Supabase ya no reconoce la sesión (vencida o cerrada en otro dispositivo), se cierra aquí también.
+void supabase.auth.getSession().then(({ data }) => {
+  if (!data.session && current?.kind === 'cuenta') {
+    current = null;
+    write(null);
+  }
+});
+supabase.auth.onAuthStateChange((event) => {
+  if (event === 'SIGNED_OUT' && current?.kind === 'cuenta') {
+    current = null;
+    write(null);
+  }
+});
+
+function explain(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes('rate limit') || m.includes('security purposes') || m.includes('too many')) return 'Espera un momento antes de pedir otro código.';
+  if (m.includes('signups not allowed') || m.includes('user not found') || m.includes('not found')) return 'No hay una cuenta con ese correo. Crea una.';
+  if (m.includes('expired') || m.includes('invalid')) return 'El código no es correcto o ya venció. Pide uno nuevo.';
+  if (m.includes('failed to fetch') || m.includes('network')) return 'Sin conexión. Revisa tu internet e inténtalo otra vez.';
+  if (m.includes('error sending') || m.includes('smtp')) return 'No se pudo enviar el correo. Inténtalo en unos minutos.';
+  return 'No se pudo completar. Intenta otra vez.';
 }
 
-export async function signIn(email: string, password: string): Promise<Session> {
+/** Manda el código al correo. Con `name` se crea la cuenta; sin él solo entra quien ya tiene una. */
+export async function requestCode(email: string, name?: string): Promise<void> {
   const e = clean(email);
-  const u = read<Record<string, Stored>>(KEY_USERS, {})[e];
-  if (!u || (await derive(password, u.salt)) !== u.hash) throw new Error('Correo o contraseña incorrectos.');
-  return start({ kind: 'cuenta', name: u.name, email: e });
+  if (name !== undefined && !name.trim()) throw new Error('Escribe tu nombre.');
+  if (!validEmail(e)) throw new Error('Ese correo no parece válido.');
+  const { error } = await supabase.auth.signInWithOtp({
+    email: e,
+    options: name !== undefined ? { shouldCreateUser: true, data: { name: name.trim() } } : { shouldCreateUser: false },
+  });
+  if (error) throw new Error(explain(error.message));
+}
+
+/** Comprueba el código y abre la sesión. */
+export async function verifyCode(email: string, code: string): Promise<Session> {
+  const e = clean(email);
+  const token = code.replace(/\D/g, '');
+  if (token.length < CODE_LENGTH) throw new Error(`El código tiene ${CODE_LENGTH} números.`);
+  const { data, error } = await supabase.auth.verifyOtp({ email: e, token, type: 'email' });
+  if (error || !data.user) throw new Error(explain(error?.message ?? 'invalid'));
+  const meta = data.user.user_metadata as { name?: string } | undefined;
+  const name = meta?.name?.trim() || e.split('@')[0];
+  current = { kind: 'cuenta', name, email: e };
+  write(current);
+  return current;
 }
 
 export function guest(): Session {
@@ -83,17 +99,8 @@ export function guest(): Session {
   return current;
 }
 
-function start(s: Session) {
-  current = s;
-  write(KEY_SESSION, s);
-  return s;
-}
-
 export function signOut() {
   current = null;
-  try {
-    localStorage.removeItem(KEY_SESSION);
-  } catch {
-    // Nada que borrar.
-  }
+  write(null);
+  void supabase.auth.signOut();
 }

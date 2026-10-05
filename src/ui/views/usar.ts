@@ -103,7 +103,6 @@ export function usarView(root: HTMLElement) {
   let mode: Screen = 'empty';
   let capture: Capture | null = null;
   let lastSeq: LipSequence | null = null;
-  let menuAt: { si: number; wi: number } | null = null;
   let eq: HTMLElement[] = [];
   let raf = 0;
   let seen: Set<string> | null = null;
@@ -140,7 +139,7 @@ export function usarView(root: HTMLElement) {
             return `<span class="u-sent">${sent
               .map(
                 (w, wi) =>
-                  `<button type="button" class="u-w${w.pending ? ' is-pending' : ''}${si === popSentence ? ' is-pop' : ''}" data-w="${si}:${wi}" style="--i:${wi}" aria-label="${esc(w.text)}${w.pending ? ', por confirmar' : ''}. Toca para corregir">${esc(tokens[wi])}${w.pending ? '<sup>?</sup>' : ''}</button>`,
+                  `<button type="button" class="u-w${si === popSentence ? ' is-pop' : ''}" data-w="${si}:${wi}" style="--i:${wi}" aria-label="${esc(w.text)}. Toca para quitar esta palabra">${esc(tokens[wi])}<i class="u-x" aria-hidden="true">×</i></button>`,
               )
               .join(' ')}</span>`;
           })
@@ -179,12 +178,9 @@ export function usarView(root: HTMLElement) {
   const renderSaid = (sent: SWord[], note: string) => {
     sentences.push(sent);
     renderPaper(sentences.length - 1);
-    const pending = sent.some((w) => w.pending);
     setScreen(
       'said',
-      `<p class="u-st ${pending ? 'u-st--miss' : 'u-st--ok'}">${
-        pending ? '<b>Casi.</b> Toca las palabras con ? para confirmarlas.' : `<span class="u-check" aria-hidden="true">${icon('check', 16, 3)}</span>${esc(note)}`
-      }</p>`,
+      `<p class="u-st u-st--ok"><span class="u-check" aria-hidden="true">${icon('check', 16, 3)}</span>${esc(note)}<small class="u-tip">Toca una palabra para quitarla.</small></p>`,
     );
   };
 
@@ -256,39 +252,9 @@ export function usarView(root: HTMLElement) {
   };
   raf = requestAnimationFrame(loop);
 
-  const showWordMenu = (si: number, wi: number) => {
-    const w = sentences[si]?.[wi];
-    if (!w) return;
-    menuAt = { si, wi };
-    const ids = [w.id, ...w.alts.filter((a) => a !== w.id)];
-    const cards = ids
-      .map((id, i) => {
-        const p = engine.phrase(id);
-        if (!p) return '';
-        return `<button class="u-opt${id === w.id && !w.pending ? ' is-current' : ''}" type="button" data-wpick="${p.id}" style="--i:${i}">
-          <span class="sphere sphere--sm sphere--${p.category}">${icon(p.icon, 20)}</span>
-          <span class="u-opt__t">${esc(p.text)}</span>
-          <span class="u-opt__p">${id === w.id ? (w.pending ? 'Confirmar' : 'Actual') : ''}</span>
-        </button>`;
-      })
-      .join('');
-    options.innerHTML = `
-      <div class="u-opts" role="dialog" aria-label="¿Cuál dijiste?">
-        <p class="u-opts__t">¿Cuál dijiste?</p>
-        <div class="u-opts__list">${cards}</div>
-        <div class="u-opts__foot">
-          <button class="u-pill u-pill--ghost" type="button" data-wdel>${icon('x', 16)}<span>Quitar esta palabra</span></button>
-          <button class="u-pill u-pill--ghost" type="button" data-dismiss>${icon('check', 16)}<span>Cerrar</span></button>
-        </div>
-      </div>`;
-    options.hidden = false;
-    (options.querySelector('[data-wpick]') as HTMLElement | null)?.focus({ preventScroll: true });
-  };
-
   const hideOptions = () => {
     options.hidden = true;
     options.innerHTML = '';
-    menuAt = null;
   };
 
   const sword = (p: Phrase, pending: boolean, alts: string[] = [], seq: LipSequence | null = null): SWord => ({ id: p.id, text: p.text, pending, alts, seq });
@@ -350,14 +316,14 @@ export function usarView(root: HTMLElement) {
       const sent: SWord[] = [];
       for (const w of words) {
         const p = engine.phrase(w.phraseId);
-        if (p) sent.push(sword(p, !w.confident, [w.phraseId, ...w.alts.map((a) => a.phraseId)], w.seq));
+        if (p) sent.push(sword(p, false, [], w.seq));
       }
       if (!sent.length) {
         renderMiss('No te entendí', 'Repítelo con calma, de frente y con buena luz. No escribo nada si no estoy seguro.');
         return;
       }
       renderSaid(sent, sent.length === 1 ? 'Palabra lista' : `Frase lista · ${sent.length} palabras`);
-      if (sent.every((w) => !w.pending)) void speakSentence(sent);
+      void speakSentence(sent);
       // Lo que se leyó con mucha seguridad enseña a la app cómo hablas tú.
       if (state.settings.learnFromUse) {
         const sure = new Map<string, LipSequence[]>();
@@ -407,34 +373,25 @@ export function usarView(root: HTMLElement) {
     }),
     on(root, 'click', '[data-w]', (_, b) => {
       const [si, wi] = b.dataset.w!.split(':').map(Number);
-      showWordMenu(si, wi);
-    }),
-    on(root, 'click', '[data-wpick]', async (_, b) => {
-      const at = menuAt;
-      const w = at && sentences[at.si]?.[at.wi];
-      const p = engine.phrase(b.dataset.wpick!);
-      if (!at || !w || !p) return;
-      hideOptions();
-      const changed = p.id !== w.id;
-      w.id = p.id;
-      w.text = p.text;
-      w.pending = false;
+      const sent = sentences[si];
+      const removed = sent?.[wi];
+      if (!sent || !removed) return;
+      sent.splice(wi, 1);
+      const emptied = sent.length === 0;
+      if (emptied) sentences.splice(si, 1);
       renderPaper();
-      const sent = sentences[at.si];
-      if (sent.every((x) => !x.pending)) {
-        setScreen('said', `<p class="u-st u-st--ok"><span class="u-check" aria-hidden="true">${icon('check', 16, 3)}</span>${changed ? 'Corregido, gracias' : 'Confirmado'}</p>`);
-        void speakSentence(sent);
-      }
-      // Lo que la persona confirma o corrige enseña a la app cómo habla.
-      if (w.seq && state.settings.learnFromUse) await engine.addSample(p.id, w.seq, 'correccion');
-    }),
-    on(root, 'click', '[data-wdel]', () => {
-      const at = menuAt;
-      if (!at) return;
-      hideOptions();
-      sentences[at.si]?.splice(at.wi, 1);
-      if (!sentences[at.si]?.length) sentences.splice(at.si, 1);
-      renderPaper();
+      vibrate(10);
+      toast(`Quitaste «${removed.text}»`, {
+        tone: 'info',
+        action: {
+          label: 'Deshacer',
+          run: () => {
+            if (emptied) sentences.splice(si, 0, [removed]);
+            else sent.splice(wi, 0, removed);
+            renderPaper();
+          },
+        },
+      });
     }),
     on(root, 'click', '[data-clear]', () => {
       sentences.length = 0;
@@ -444,7 +401,6 @@ export function usarView(root: HTMLElement) {
     on(root, 'click', '[data-speak-all]', async () => {
       for (const sent of sentences) await speakSentence(sent);
     }),
-    on(root, 'click', '[data-dismiss]', () => hideOptions()),
     engine.onChange(() => {
       renderWords();
       renderReady();

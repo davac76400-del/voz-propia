@@ -5,7 +5,7 @@ import './loader.css';
 
 import { state } from '../../app/state';
 import type { Role } from '../../core/types';
-import { guest, session, signIn, signOut, signUp } from '../../core/auth';
+import { CODE_LENGTH, guest, requestCode, session, signOut, verifyCode } from '../../core/auth';
 import { speakText } from '../../core/voice/speaker';
 import { brandMark } from '../brand';
 import { bindHold, holdRing } from '../components/hold';
@@ -304,7 +304,7 @@ function template() {
           <button class="l-gate__opt" type="button" data-guest>
             <span class="l-gate__ic">${icon('user', 20)}</span><span><b>Entrar sin cuenta</b><small>Rápido. Al salir no se guarda nada.</small></span>${orbChevron()}
           </button>
-          <p class="l-gate__fine">${icon('lock', 14)} Tu cuenta se guarda en este dispositivo. Nadie más la ve.</p>
+          <p class="l-gate__fine">${icon('lock', 14)} Entras con un código que te llega al correo. Sin contraseñas.</p>
         </div>
         <div class="l-gate__view l-gate__hello" data-view="hola" hidden>
           <svg class="l-gate__check" viewBox="0 0 52 52" aria-hidden="true"><circle cx="26" cy="26" r="24"/><path d="M15 27 l8 8 l15 -17"/></svg>
@@ -341,10 +341,10 @@ function template() {
         <form class="l-gate__view" data-view="entrar" data-form="entrar" hidden novalidate>
           <button class="l-gate__back" type="button" data-go-view="elegir">${icon('arrow-left', 18, 2.4)}<span>Volver</span></button>
           <h2>Iniciar sesión</h2>
+          <p class="l-gate__p">Te mandamos un código al correo. No necesitas contraseña.</p>
           <label class="l-gate__field"><span>Correo</span><input type="email" name="email" autocomplete="email" inputmode="email" required></label>
-          <label class="l-gate__field"><span>Contraseña</span><input type="password" name="password" autocomplete="current-password" required></label>
           <p class="l-gate__err" data-err aria-live="polite"></p>
-          <button class="l-gate__submit" type="submit"><span>Entrar</span>${orbChevron()}</button>
+          <button class="l-gate__submit" type="submit"><span>Enviarme el código</span>${orbChevron()}</button>
           <p class="l-gate__switch">¿No tienes cuenta? <button type="button" data-go-view="crear">Crear cuenta</button></p>
         </form>
         <form class="l-gate__view" data-view="crear" data-form="crear" hidden novalidate>
@@ -352,10 +352,20 @@ function template() {
           <h2>Crear cuenta</h2>
           <label class="l-gate__field"><span>Tu nombre</span><input type="text" name="name" autocomplete="name" required></label>
           <label class="l-gate__field"><span>Correo</span><input type="email" name="email" autocomplete="email" inputmode="email" required></label>
-          <label class="l-gate__field"><span>Contraseña <small>(mínimo 6)</small></span><input type="password" name="password" autocomplete="new-password" minlength="6" required></label>
           <p class="l-gate__err" data-err aria-live="polite"></p>
-          <button class="l-gate__submit" type="submit"><span>Crear y entrar</span>${orbChevron()}</button>
+          <button class="l-gate__submit" type="submit"><span>Enviarme el código</span>${orbChevron()}</button>
           <p class="l-gate__switch">¿Ya tienes cuenta? <button type="button" data-go-view="entrar">Iniciar sesión</button></p>
+        </form>
+        <form class="l-gate__view" data-view="codigo" data-form="codigo" hidden novalidate>
+          <button class="l-gate__back" type="button" data-code-back>${icon('arrow-left', 18, 2.4)}<span>Cambiar correo</span></button>
+          <h2>Revisa tu correo</h2>
+          <p class="l-gate__p">Escribe el código de ${CODE_LENGTH} números que mandamos a <b data-code-mail></b>.</p>
+          <div class="l-code" data-code role="group" aria-label="Código de ${CODE_LENGTH} números">
+            ${Array.from({ length: CODE_LENGTH }, (_, i) => `<input class="l-code__box" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="${CODE_LENGTH}" autocomplete="${i === 0 ? 'one-time-code' : 'off'}" aria-label="Número ${i + 1}" data-box="${i}">`).join('')}
+          </div>
+          <p class="l-gate__err" data-err aria-live="polite"></p>
+          <button class="l-gate__submit" type="submit"><span>Verificar y entrar</span>${orbChevron()}</button>
+          <p class="l-gate__switch">¿No llegó? Revisa spam o <button type="button" data-resend>Reenviar código</button><span data-resend-wait></span></p>
         </form>
       </div>
     </div>
@@ -899,6 +909,95 @@ export function mountLanding(app: HTMLElement, opts: Options) {
     { signal, passive: false },
   );
 
+  /* ---------- Código del correo ---------- */
+
+  let pending: { email: string; name?: string } = { email: '' };
+  let resendTimer = 0;
+  const codeForm = () => gate.querySelector<HTMLFormElement>('[data-form="codigo"]')!;
+  const boxes = () => Array.from(codeForm().querySelectorAll<HTMLInputElement>('[data-box]'));
+
+  const startResendWait = (secs = 45) => {
+    clearInterval(resendTimer);
+    const btn = codeForm().querySelector<HTMLButtonElement>('[data-resend]')!;
+    const note = codeForm().querySelector<HTMLElement>('[data-resend-wait]')!;
+    let left = secs;
+    btn.disabled = true;
+    const tick = () => {
+      note.textContent = left > 0 ? ` (${left} s)` : '';
+      if (left-- <= 0) {
+        clearInterval(resendTimer);
+        btn.disabled = false;
+      }
+    };
+    tick();
+    resendTimer = window.setInterval(tick, 1000);
+  };
+
+  const showCodeView = () => {
+    boxes().forEach((b) => (b.value = ''));
+    codeForm().querySelector<HTMLElement>('[data-code-mail]')!.textContent = pending.email;
+    setView('codigo');
+    startResendWait();
+    boxes()[0]?.focus({ preventScroll: true });
+  };
+
+  gate.addEventListener(
+    'input',
+    (e) => {
+      const box = e.target as HTMLInputElement;
+      if (!box.matches('[data-box]')) return;
+      const all = boxes();
+      const i = Number(box.dataset.box);
+      const digits = box.value.replace(/\D/g, '');
+      // Pegar o autocompletar el código completo reparte los números; si no, la casilla guarda solo el último.
+      if (digits.length >= all.length) {
+        digits.slice(0, all.length).split('').forEach((d, k) => (all[k].value = d));
+        all[all.length - 1].focus();
+      } else {
+        box.value = digits.slice(-1);
+        if (box.value && i < all.length - 1) all[i + 1].focus();
+      }
+      if (all.every((b) => b.value)) codeForm().requestSubmit();
+    },
+    { signal },
+  );
+
+  gate.addEventListener(
+    'keydown',
+    (e) => {
+      const box = e.target as HTMLInputElement;
+      if (!box.matches?.('[data-box]')) return;
+      const all = boxes();
+      const i = Number(box.dataset.box);
+      if (e.key === 'Backspace' && !box.value && i > 0) all[i - 1].focus();
+      if (e.key === 'ArrowLeft' && i > 0) all[i - 1].focus();
+      if (e.key === 'ArrowRight' && i < all.length - 1) all[i + 1].focus();
+    },
+    { signal },
+  );
+
+  gate.addEventListener(
+    'click',
+    async (e) => {
+      const t = e.target as HTMLElement;
+      if (t.closest('[data-code-back]')) return setView(pending.name !== undefined ? 'crear' : 'entrar');
+      if (t.closest('[data-resend]')) {
+        const err = codeForm().querySelector<HTMLElement>('[data-err]')!;
+        err.textContent = '';
+        try {
+          await requestCode(pending.email, pending.name);
+          boxes().forEach((b) => (b.value = ''));
+          boxes()[0]?.focus();
+          startResendWait();
+          err.textContent = '';
+        } catch (x) {
+          err.textContent = x instanceof Error ? x.message : 'No se pudo reenviar.';
+        }
+      }
+    },
+    { signal },
+  );
+
   gate.addEventListener(
     'submit',
     async (e) => {
@@ -911,13 +1010,25 @@ export function mountLanding(app: HTMLElement, opts: Options) {
       btn.disabled = true;
       err.textContent = '';
       try {
-        if (form.dataset.form === 'crear') await signUp(v('name'), v('email'), v('password'));
-        else await signIn(v('email'), v('password'));
+        if (form.dataset.form === 'codigo') {
+          const code = Array.from(form.querySelectorAll<HTMLInputElement>('[data-box]'), (i) => i.value).join('');
+          await verifyCode(pending.email, code);
+        } else {
+          pending = { email: v('email').trim().toLowerCase(), name: form.dataset.form === 'crear' ? v('name') : undefined };
+          await requestCode(pending.email, pending.name);
+          showCodeView();
+          return;
+        }
         form.reset();
+        clearInterval(resendTimer);
         welcome();
       } catch (x) {
         vibrate([30, 50, 30]);
         err.textContent = x instanceof Error ? x.message : 'No se pudo entrar. Intenta otra vez.';
+        if (form.dataset.form === 'codigo') {
+          boxes().forEach((b) => (b.value = ''));
+          boxes()[0]?.focus();
+        }
         form.classList.remove('is-shake');
         void form.offsetWidth;
         form.classList.add('is-shake');
