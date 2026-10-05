@@ -1,10 +1,13 @@
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import { extractFeatures, FEATURE_DIMS, mouthOpenness } from './lip-features';
+import { rawFrame } from './raw-store';
 
 export interface FrameFeatures {
   /** Milisegundos desde el inicio del video. */
   t: number;
   features: Float32Array;
+  /** Posiciones crudas medidas por la cámara; es lo que se guarda en la nube. */
+  raw: Int16Array;
   openness: number;
 }
 
@@ -211,6 +214,7 @@ export async function processVideoFile(file: File, onProgress?: (pct: number) =>
             frames.push({
               t: mediaTime * 1000,
               features: extractFeatures(face, r.faceBlendshapes[0]?.categories, aspect, new Float32Array(FEATURE_DIMS)),
+              raw: rawFrame(face, r.faceBlendshapes[0]?.categories, aspect),
               openness: mouthOpenness(face, aspect),
             });
           }

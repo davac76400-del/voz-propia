@@ -2,6 +2,7 @@ import { engine } from '../../core/engine';
 import { dtw } from '../../core/learn/dtw';
 import type { LipSequence } from '../../core/types';
 import { FEATURE_DIMS } from '../../core/vision/lip-features';
+import { packRaw } from '../../core/vision/raw-store';
 import { phraseFromFilename } from '../../core/vision/filename-phrase';
 import { collapseRepeats, splitRepetitions, sparkline, type Pause, type Repetition } from '../../core/vision/repetitions';
 import { processVideoFile, type FrameFeatures } from '../../core/vision/video-processor';
@@ -12,7 +13,6 @@ import { esc } from '../dom';
 import { icon } from '../icons';
 import { toast } from './toast';
 
-const round = (n: number) => Math.round(n * 10000) / 10000;
 const MIN_FRAMES = 8;
 const SUSPECT_FACTOR = 1.8;
 const SCORE_SAMPLE = 30;
@@ -339,7 +339,7 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
             frame_count: r.rep.frames.length,
             folder: folderName,
             source_name: g.source,
-            lip_points: { dims: seq.dims, fps: round(seq.fps), frames: Array.from(seq.frames, round) },
+            lip_points: packRaw(r.rep.frames.map((f) => f.raw), seq.fps),
           };
         });
         for (let i = 0; i < rows.length; i += INSERT_BATCH) await insertClips(rows.slice(i, i + INSERT_BATCH));

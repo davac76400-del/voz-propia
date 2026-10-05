@@ -1,14 +1,9 @@
-import { FEATURE_DIMS } from './vision/lip-features';
+import { isRaw, unpackRaw, type RemoteRaw } from './vision/raw-store';
 import { engine, MAX_SAMPLES_PER_PHRASE } from './engine';
 import { dtw } from './learn/dtw';
 import { supabase } from './supabase';
 import type { LipSequence } from './types';
 
-interface RemoteSeq {
-  dims: number;
-  fps: number;
-  frames: number[];
-}
 
 interface Versions {
   [key: string]: string;
@@ -18,7 +13,6 @@ const VERSIONS_KEY = 'voz-propia:shared-versions';
 const keyOf = (text: string) => text.trim().toLowerCase();
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
-const toSeq = (r: RemoteSeq): LipSequence => ({ dims: r.dims, fps: r.fps, frames: Float32Array.from(r.frames) });
 
 function readVersions(): Versions {
   try {
@@ -46,8 +40,8 @@ export async function publishPhrase(text: string): Promise<void> {
   const key = keyOf(text);
   const { data, error } = await supabase.from('programmer_videos').select('lip_points,folder').ilike('text', escapeLike(text.trim()));
   if (error) throw new Error(error.message);
-  const all = (data ?? []).filter((r) => (r.lip_points as RemoteSeq)?.frames?.length && (r.lip_points as RemoteSeq).dims === FEATURE_DIMS);
-  const rows = all.map((r) => r.lip_points as RemoteSeq);
+  const all = (data ?? []).filter((r) => isRaw(r.lip_points));
+  const rows = all.map((r) => r.lip_points as RemoteRaw);
   const counts = new Map<string, number>();
   for (const r of all) counts.set(r.folder as string, (counts.get(r.folder as string) ?? 0) + 1);
   const folder = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'Sin carpeta';
@@ -60,7 +54,7 @@ export async function publishPhrase(text: string): Promise<void> {
 
   let chosen = rows;
   if (rows.length > MAX_SAMPLES_PER_PHRASE) {
-    const emb = await Promise.all(rows.map((r) => engine.embed(toSeq(r))));
+    const emb = await Promise.all(rows.map((r) => engine.embed(unpackRaw(r)!)));
     const { L, D } = emb[0];
     const step = Math.max(1, Math.ceil((rows.length - 1) / 30));
     const scores = emb.map((e, i) => median(emb.filter((_, j) => j !== i && (j % step === 0 || step === 1)).map((o) => dtw(e.x, o.x, L, D))));
@@ -118,7 +112,7 @@ async function syncOnce() {
   for (const r of changed) {
     const { data: full, error: e2 } = await supabase.from('shared_phrases').select('samples').eq('text_key', r.text_key).single();
     if (e2) throw new Error(e2.message);
-    const seqs = ((full?.samples ?? []) as RemoteSeq[]).filter((s) => s?.frames?.length).map(toSeq);
+    const seqs = ((full?.samples ?? []) as unknown[]).filter(isRaw).map(unpackRaw).filter((q): q is LipSequence => !!q);
     items.push({ key: r.text_key as string, text: r.text as string, folder: (r.folder as string) || 'Sin carpeta', seqs });
   }
 

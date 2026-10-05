@@ -13,7 +13,7 @@ const LIP_POINTS = [...LIP_OUTER, ...LIP_INNER, ...MOUTH_AROUND];
 const EYE_L = 33;
 const EYE_R = 263;
 
-const MOUTH_BLENDSHAPES = [
+export const MOUTH_BLENDSHAPES = [
   'jawOpen', 'mouthClose', 'mouthFunnel', 'mouthPucker', 'mouthLeft', 'mouthRight',
   'mouthSmileLeft', 'mouthSmileRight', 'mouthFrownLeft', 'mouthFrownRight',
   'mouthDimpleLeft', 'mouthDimpleRight', 'mouthStretchLeft', 'mouthStretchRight',
