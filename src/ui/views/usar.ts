@@ -12,8 +12,14 @@ import { $, esc, on, vibrate } from '../dom';
 import { icon } from '../icons';
 
 const RING = 2 * Math.PI * 54;
-/** Con una sola palabra: hasta cuántas veces la variación normal se acepta como «la dijiste». */
-const VERIFY_LIMIT = 1.8;
+/** Hasta cuántas veces la variación normal entre ejemplos se acepta como «la dijiste» (otra persona o cámara se parece menos). */
+const VERIFY_LIMIT = 2.8;
+/** Cuando ya hay ejemplos de esta persona se exige más. */
+const VERIFY_LIMIT_PERSONAL = 2.2;
+/** Con esta cercanía la lectura es tan segura que se aprende de ella. */
+const LEARN_RATIO = 1.7;
+/** Menos movimiento que esto es solo el temblor de la cámara. */
+const MIN_ACTIVITY = 0.008;
 const BARS = 28;
 
 type Screen = 'empty' | 'idle' | 'listening' | 'said' | 'miss' | 'pick';
@@ -147,13 +153,22 @@ export function usarView(root: HTMLElement) {
     setScreen(
       'said',
       `<p class="u-st u-st--ok"><span class="u-check" aria-hidden="true">${icon('check', 16, 3)}</span>${
-        corrected ? 'Corregido, gracias' : `Se parece ${pct}%`
+        corrected ? 'Aprendido, gracias' : `Se parece ${pct}%`
       }</p>`,
     );
   };
 
-  const renderMiss = (title: string, detail: string) => {
-    setScreen('miss', `<p class="u-st u-st--miss"><b>${esc(title)}.</b> ${esc(detail)}</p>`);
+  const renderMiss = (title: string, detail: string, guess?: Phrase | null) => {
+    setScreen(
+      'miss',
+      `<div class="u-miss2"><p class="u-st u-st--miss"><b>${esc(title)}.</b> ${esc(detail)}</p>${
+        guess
+          ? `<button class="u-pill u-pill--ghost" type="button" data-confirm="${guess.id}">${icon('check', 16, 2.6)}<span>Sí dije «${esc(guess.text)}»</span></button>`
+          : lastPred?.candidates.length
+            ? `<button class="u-pill u-pill--ghost" type="button" data-choose>${icon('help', 16, 2.2)}<span>Elegir la palabra</span></button>`
+            : ''
+      }</div>`,
+    );
     vibrate([20, 40, 20]);
   };
 
@@ -277,30 +292,37 @@ export function usarView(root: HTMLElement) {
       const seq = await capture.result;
       lastSeq = seq;
       const list = trained();
-      if (list.length === 1) {
-        // Una sola palabra: se acepta solo si el movimiento se parece de verdad a sus ejemplos.
-        const v = await engine.verify(seq);
-        lastPred = null;
-        if (v && v.ratio <= VERIFY_LIMIT) {
-          const match = Math.max(0.6, Math.min(1, 1 - ((v.ratio - 1) / (VERIFY_LIMIT - 1)) * 0.4));
-          renderSaid(v.phrase, match);
-          void say(v.phrase);
-        } else {
-          renderMiss('No te entendí', 'Repítelo con calma. No escribo nada hasta estar seguro.');
-        }
-      } else {
+      lastPred = null;
+      if (engine.activity(seq) < MIN_ACTIVITY) {
+        renderMiss('No vi que movieras los labios', 'Dilo moviendo bien la boca, de frente a la cámara.');
+        return;
+      }
+      const v = await engine.verify(seq);
+      const limit = v && v.personal >= 3 ? VERIFY_LIMIT_PERSONAL : VERIFY_LIMIT;
+      // Primero se comprueba que se parezca de verdad a una palabra; si no, no se escribe nada.
+      if (!v || v.ratio > limit) {
+        if (list.length > 1) lastPred = await engine.recognize(seq, state.settings.autoSpeakThreshold);
+        renderMiss('No te entendí', 'Repítelo con calma, de frente y con buena luz. No escribo nada si no estoy seguro.', list.length === 1 ? v?.phrase : null);
+        return;
+      }
+      let phrase = v.phrase;
+      if (list.length > 1) {
         const pred = await engine.recognize(seq, state.settings.autoSpeakThreshold);
         lastPred = pred;
         const top = pred.candidates[0] && engine.phrase(pred.candidates[0].phraseId);
-        if (!top) renderMiss('No te entendí', 'No pude leer ninguna palabra. Intenta otra vez.');
-        else if (pred.ambiguous) {
+        if (!top || pred.ambiguous) {
           renderIdle();
-          showOptions(pred);
-        } else {
-          renderSaid(top, pred.confidence);
-          void say(top);
+          if (pred.candidates.length) showOptions(pred);
+          else renderMiss('No te entendí', 'Intenta otra vez.');
+          return;
         }
+        phrase = top;
       }
+      const match = Math.max(0.6, Math.min(1, 1 - ((v.ratio - 1) / (limit - 1)) * 0.4));
+      renderSaid(phrase, match);
+      void say(phrase);
+      // Lectura muy segura: se aprende de cómo habla esta persona para acertar cada vez mejor.
+      if (v.ratio <= LEARN_RATIO && state.settings.learnFromUse) void engine.addSample(phrase.id, seq, 'correccion');
     } catch (err) {
       if (err instanceof CaptureError && err.code === 'sin-rostro') {
         renderMiss('Perdí de vista tu boca', 'Intenta de nuevo con la cara centrada y sin taparte la boca.');
@@ -331,6 +353,20 @@ export function usarView(root: HTMLElement) {
     on(root, 'click', '[data-repeat]', (_, b) => {
       const p = engine.phrase(b.dataset.repeat!);
       if (p) void say(p);
+    }),
+    on(root, 'click', '[data-confirm]', async (_, b) => {
+      const p = engine.phrase(b.dataset.confirm!);
+      if (!p) return;
+      renderSaid(p, 1, true);
+      void say(p);
+      if (lastSeq) {
+        const seq = lastSeq;
+        lastSeq = null;
+        await engine.addSample(p.id, seq, 'correccion');
+      }
+    }),
+    on(root, 'click', '[data-choose]', () => {
+      if (lastPred) showOptions(lastPred);
     }),
     on(root, 'click', '[data-clear]', () => {
       said.length = 0;

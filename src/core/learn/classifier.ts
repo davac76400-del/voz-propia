@@ -10,7 +10,7 @@ export interface Embedded {
 
 const RATIO_SHARPNESS = 5;
 /** Distancia máxima, en múltiplos de la variación normal entre ejemplos, antes de dudar. */
-const OUTLIER_LIMIT = 2.2;
+const OUTLIER_LIMIT = 3;
 
 interface Prepared {
   phraseId: string;

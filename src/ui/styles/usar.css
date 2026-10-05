@@ -1061,3 +1061,10 @@
   .u-caret,
   .u-status > * { animation: none; }
 }
+
+.u-miss2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}

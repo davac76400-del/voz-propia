@@ -22,6 +22,9 @@ export const MOUTH_BLENDSHAPES = [
   'mouthUpperUpLeft', 'mouthUpperUpRight', 'cheekPuff',
 ] as const;
 
+/** Cuántos de los rasgos son posiciones de puntos (el resto son gestos de la boca). */
+export const LANDMARK_DIMS = LIP_POINTS.length * 2;
+
 const BLEND_WEIGHT = 0.6;
 export const FEATURE_DIMS = LIP_POINTS.length * 2 + MOUTH_BLENDSHAPES.length;
 

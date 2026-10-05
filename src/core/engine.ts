@@ -1,7 +1,8 @@
 import { FEATURE_DIMS } from './vision/lip-features';
 import { FewShotClassifier, type Embedded } from './learn/classifier';
 import { NeuralEncoder } from './learn/neural-encoder';
-import { resample, TARGET_LEN, trimStill, withDeltas } from './learn/sequence';
+import { mouthActivity, prepareFrames } from './learn/embed';
+import { TARGET_LEN, withDeltas } from './learn/sequence';
 import { db, uid } from './storage/db';
 import type { LipSequence, Phrase, Prediction, Sample } from './types';
 import { DEFAULT_PHRASES } from '../data/default-phrases';
@@ -65,9 +66,8 @@ class Engine {
 
   async embed(seq: LipSequence): Promise<Embedded> {
     const D = seq.dims;
-    const T = seq.frames.length / D;
-    const trimmed = trimStill(seq.frames, T, D);
-    const fixed = resample(trimmed.x, trimmed.T, D);
+    // Se quita la forma media de la boca y la amplitud: otra persona u otra cámara se leen igual.
+    const { fixed } = prepareFrames(seq.frames, D, { speaker: true });
     if (this.neural) {
       const out = await this.neural.embed(fixed, TARGET_LEN, D);
       return { x: out.x, L: TARGET_LEN, D: out.D };
@@ -104,10 +104,17 @@ class Engine {
    * Con una sola frase preparada no hay con qué compararla: se mide qué tan parecida es la toma a los ejemplos.
    * `ratio` 1 es como un ejemplo propio; mientras más grande, menos se parece.
    */
-  async verify(seq: LipSequence): Promise<{ phrase: Phrase; ratio: number } | null> {
+  async verify(seq: LipSequence): Promise<{ phrase: Phrase; ratio: number; personal: number } | null> {
     const r = this.classifier.closeness(await this.embed(seq));
     const phrase = r && this.phrase(r.phraseId);
-    return r && phrase ? { phrase, ratio: r.ratio } : null;
+    if (!r || !phrase) return null;
+    const personal = this.samples.filter((x) => x.phraseId === phrase.id && !x.id.startsWith(SHARED_PREFIX)).length;
+    return { phrase, ratio: r.ratio, personal };
+  }
+
+  /** Cuánto se movieron los labios en la toma; 0 si se quedó quieta. */
+  activity(seq: LipSequence): number {
+    return mouthActivity(seq.frames, seq.dims);
   }
 
   async recognize(seq: LipSequence, threshold: number): Promise<Prediction> {
