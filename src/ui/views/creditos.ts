@@ -5,9 +5,21 @@ import { icon } from '../icons';
 const OWN: string[] = [
   'La lectura de labios: cómo se normalizan los puntos de la boca para que funcione con otra persona o cámara, y cómo se comparan las tomas.',
   'El decodificador que separa una frase en palabras y escoge la mejor combinación.',
-  'El modelo de frases en español, escrito por el equipo, y lo que la app aprende de qué palabras van juntas.',
+  'El modelo de frases en español y lo que la app aprende de qué palabras van juntas.',
   'El entrenamiento que mide cada palabra al subir ejemplos y aparta los ejemplos dudosos.',
   'Las cuentas con correo, usuario y contraseña de 4 números, y todo el diseño, las animaciones y los textos.',
+];
+
+const AI_DID: string[] = [
+  'Escribió y revisó la mayor parte del código de la app: la interfaz, las cuentas, la lectura de labios, el entrenamiento y las pruebas.',
+  'Propuso soluciones a los errores que fueron saliendo y ayudó a redactar los textos.',
+  'Buscó datos y fuentes para la página «Cómo funciona y cómo te ayuda».',
+];
+
+const TEAM_DID: string[] = [
+  'Decidió qué problema resolver, para quién y cómo debía verse y sentirse.',
+  'Dirigió el trabajo paso a paso, probó cada resultado y pidió correcciones.',
+  'Prepara los ejemplos con los que se entrena la app y es responsable del resultado.',
 ];
 
 const THIRD: [string, string, string][] = [
@@ -35,19 +47,25 @@ export function creditosView(root: HTMLElement) {
       <button class="cr__back" type="button" data-back>${icon('arrow-left', 18, 2.4)}<span>Volver</span></button>
       <p class="cr__eye">[ Transparencia ]</p>
       <h1>Herramientas y créditos</h1>
-      <p class="cr__lead">Aquí está, sin rodeos, qué hicimos nosotros, qué usamos de otros y cómo usamos inteligencia artificial.</p>
+      <p class="cr__lead">Aquí está, sin rodeos, qué construimos, qué usamos de otros y qué parte hizo la inteligencia artificial. La convocatoria de Infomatrix acepta la IA como apoyo si se indica su contribución, y aquí la indicamos.</p>
 
-      <h2>Lo que hizo el equipo</h2>
+      <h2>Lo que construimos</h2>
       <ul class="cr__list">${OWN.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
 
       <h2>Lo que usamos de otros</h2>
       <p class="cr__note">Todo con licencia abierta que permite usarlo en proyectos como este.</p>
       <ul class="cr__cards">${THIRD.map(([n, d, l]) => `<li><b>${esc(n)}</b><span>${esc(d)}</span><em>${esc(l)}</em></li>`).join('')}</ul>
 
-      <h2>Uso de inteligencia artificial</h2>
+      <h2>Contribución de la inteligencia artificial</h2>
+      <p class="cr__note">Herramienta: Claude Code, un asistente de programación con IA de Anthropic.</p>
+      <h3>Qué hizo la IA</h3>
+      <ul class="cr__list">${AI_DID.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+      <h3>Qué hizo el equipo</h3>
+      <ul class="cr__list">${TEAM_DID.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+
+      <h2>Cómo se usa la IA dentro de la app</h2>
       <ul class="cr__list">
-        <li><b>Al programar:</b> el equipo usó un asistente de programación con IA (Claude Code, de Anthropic) para escribir y revisar código. El equipo decidió qué construir, probó cada parte y es responsable del resultado.</li>
-        <li><b>Dentro de la app:</b> no hay chatbot ni IA que escriba textos o genere imágenes. La lectura de labios usa los puntos de la cara que da el modelo de Google y los cálculos del equipo.</li>
+        <li><b>Al usarla:</b> no hay chatbot ni IA que escriba textos o genere imágenes. La lectura de labios usa los puntos de la cara que da el modelo de Google y los cálculos del equipo.</li>
         <li><b>Solo en modo programador:</b> Whisper escribe el texto de un video para nombrar una frase. La persona que usa la app no lo ve.</li>
         <li><b>Idea de investigación:</b> aprender palabras con pocos ejemplos está inspirado en LipLearner (Su, Fang y Rekimoto, CHI 2023).</li>
       </ul>

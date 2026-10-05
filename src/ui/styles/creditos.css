@@ -13,3 +13,5 @@
 .cr__cards b { font-size: var(--fs-md); }
 .cr__cards span { color: #d4dcf5; line-height: 1.5; }
 .cr__cards em { justify-self: start; margin-top: 2px; padding: 2px 10px; border-radius: var(--r-pill); background: rgb(var(--t-a2-rgb) / 0.16); color: var(--t-a2); font: 700 var(--fs-xs) var(--font-mono); font-style: normal; }
+
+.cr h3 { margin: var(--s-5) 0 var(--s-2); font: 700 var(--fs-md) var(--font-display); color: var(--t-a2); }
