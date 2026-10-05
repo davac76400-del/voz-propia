@@ -154,6 +154,7 @@ export function usarView(root: HTMLElement) {
     if (!ok.length) return;
     vibrate(18);
     for (const w of ok) pushHistory(w.id);
+    engine.recordSentence(ok.map((w) => w.id));
     if (ok.length === 1) {
       const p = engine.phrase(ok[0].id);
       if (p) return void (await speakPhrase(p, state.settings));

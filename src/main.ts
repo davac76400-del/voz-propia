@@ -253,6 +253,14 @@ async function boot() {
   loadTheme();
   enableTilt(document.body);
   await loadSettings();
+  engine.autoTrainWhen = () => state.settings.role === 'programador';
+  engine.onTrained = (now, before) => {
+    if (now.accuracy === null) return;
+    const pct = Math.round(now.accuracy * 100);
+    const diff = before?.accuracy != null ? pct - Math.round(before.accuracy * 100) : null;
+    const trend = diff === null || diff === 0 ? '' : diff > 0 ? `, subió ${diff}` : `, bajó ${-diff}`;
+    toast(`Entrenada: ${pct} % de aciertos${trend}. ${now.ready} de ${now.words} palabras listas.`, { tone: diff !== null && diff < 0 ? 'warn' : 'ok' });
+  };
   await engine.load();
   void syncShared();
   watchShared();

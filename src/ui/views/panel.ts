@@ -1,6 +1,8 @@
 import { go, type Route } from '../../app/router';
 import { state, updateSettings } from '../../app/state';
 import { engine, MAX_SAMPLES_PER_PHRASE, READY_SAMPLES } from '../../core/engine';
+import { topTransitions } from '../../core/language/learned';
+import { readHistory } from '../../core/learn/progress';
 import { esc, on } from '../dom';
 import { icon } from '../icons';
 
@@ -8,6 +10,65 @@ const MIN_READY = 5;
 
 /** Panel del programador: qué tan lista está la app antes de entregarla al usuario. */
 export function panelView(root: HTMLElement) {
+
+  const trainCard = () => {
+    const t = engine.lastTraining;
+    const hist = readHistory().filter((h) => h.accuracy !== null);
+    const pts = hist.slice(-20);
+    const spark =
+      pts.length >= 2
+        ? `<svg class="train__spark" viewBox="0 0 100 32" preserveAspectRatio="none" role="img" aria-label="Aciertos en las últimas mediciones"><polyline points="${pts
+            .map((h, i) => `${((i / (pts.length - 1)) * 100).toFixed(1)},${(30 - (h.accuracy as number) * 28).toFixed(1)}`)
+            .join(' ')}"/></svg>`
+        : '';
+    const pct = t?.accuracy != null ? Math.round(t.accuracy * 100) : null;
+    const prev = hist.length >= 2 ? hist[hist.length - 2].accuracy : null;
+    const diff = pct !== null && prev != null ? pct - Math.round(prev * 100) : null;
+    const health = t?.health ?? [];
+    const tiers = { lista: 0, mejorando: 0, nueva: 0 };
+    for (const h of health) tiers[h.tier]++;
+    const todo = health
+      .filter((h) => h.tier !== 'lista')
+      .slice(0, 5)
+      .map((h) => {
+        const hints: string[] = [];
+        if (h.samples < READY_SAMPLES) hints.push(`le faltan ${READY_SAMPLES - h.samples} ejemplo${READY_SAMPLES - h.samples > 1 ? 's' : ''}`);
+        if (h.accuracy !== null && h.accuracy < 0.9 && h.confusedWith.length) hints.push(`se confunde con ${h.confusedWith.map((c) => `«${esc(c)}»`).join(' y ')}`);
+        if (h.doubtful) hints.push(`${h.doubtful} ejemplo${h.doubtful > 1 ? 's' : ''} dudoso${h.doubtful > 1 ? 's' : ''} apartado${h.doubtful > 1 ? 's' : ''}`);
+        return `<li><b>${esc(h.text)}</b><span class="train__pct">${h.accuracy === null ? 'sin medir' : `${Math.round(h.accuracy * 100)} %`}</span><small>${hints.join(' · ') || 'sigue sumando ejemplos'}</small></li>`;
+      })
+      .join('');
+    const pairs = topTransitions(6)
+      .map((x) => `<span class="train__pair">${esc(x.from ?? '')} <i>→</i> ${esc(x.to)}${x.count > 1 ? ` <small>×${x.count}</small>` : ''}</span>`)
+      .join('');
+    return `<article class="card train">
+      <div class="dash__top">
+        <p class="dash__title">Entrenamiento</p>
+        <span class="dash__live ${engine.training ? '' : 'is-idle'}"><i></i>${engine.training ? 'Midiendo…' : 'Al subir palabras, se mide solo'}</span>
+      </div>
+      <div class="train__head">
+        <p class="train__big">${pct === null ? '–' : `${pct}<small>%</small>`}</p>
+        <p class="train__lead">${
+          pct === null
+            ? 'Aún no hay con qué medir. Sube al menos 2 palabras con 2 ejemplos cada una.'
+            : `de aciertos probando cada ejemplo contra los demás${diff ? ` (${diff > 0 ? '+' : ''}${diff} desde la medición anterior)` : ''}.`
+        }</p>
+        ${spark}
+      </div>
+      <div class="train__tiers">
+        <span class="train__tier train__tier--lista"><b>${tiers.lista}</b> listas</span>
+        <span class="train__tier train__tier--mejorando"><b>${tiers.mejorando}</b> mejorando</span>
+        <span class="train__tier train__tier--nueva"><b>${tiers.nueva}</b> nuevas</span>
+      </div>
+      ${todo ? `<p class="dash__title train__sub">Para mejorar</p><ul class="train__list">${todo}</ul>` : ''}
+      ${pairs ? `<p class="dash__title train__sub">Palabras que aprendió que van juntas</p><div class="train__pairs">${pairs}</div>` : ''}
+      <div class="row">
+        <button class="btn btn--primary btn--sm" type="button" data-train ${engine.training ? 'disabled' : ''}>${icon('sparkles', 16)}<span>${engine.training ? 'Entrenando…' : 'Entrenar ahora'}</span></button>
+        <button class="btn btn--soft btn--sm" type="button" data-precision>${icon('gauge', 16)}<span>Ver detalle</span></button>
+      </div>
+    </article>`;
+  };
+
   const render = () => {
     const phrases = engine.phrases;
     const total = phrases.length;
@@ -90,6 +151,8 @@ export function panelView(root: HTMLElement) {
           </article>
         </div>
 
+        ${trainCard()}
+
         <div class="quick-grid">
           ${(
             [
@@ -117,6 +180,8 @@ export function panelView(root: HTMLElement) {
       await updateSettings({ role: 'usuario' });
       go('hablar');
     }),
+    on(root, 'click', '[data-train]', () => void engine.trainNow(undefined, false)),
+    on(root, 'click', '[data-precision]', async () => (await import('../components/dev-eval')).openPrecision()),
     engine.onChange(render),
   ];
   render();

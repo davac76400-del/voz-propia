@@ -13,8 +13,22 @@ const RATIO_SHARPNESS = 5;
 const OUTLIER_LIMIT = 3;
 
 interface Prepared {
+  id?: string;
   phraseId: string;
   x: Float32Array;
+}
+
+/** Un ejemplo se deja fuera si su vecino más cercano de la misma frase está tantas veces más lejos que lo normal en esa frase. */
+const DOUBTFUL_RATIO = 2;
+/** ...y además queda claramente más lejos que la variación típica de todas las frases. */
+const DOUBTFUL_GLOBAL = 1.3;
+/** Solo se descartan ejemplos de frases con suficientes, y siempre quedan al menos 3. */
+const MIN_FOR_DOUBT = 4;
+
+export interface Doubtful {
+  id?: string;
+  phraseId: string;
+  ratio: number;
 }
 
 /**
@@ -29,6 +43,8 @@ export class FewShotClassifier {
   private D = 0;
   /** Distancia típica entre dos ejemplos de la misma frase. */
   private scale = 1;
+  /** Ejemplos que no se usan para comparar porque no se parecen a los demás de su frase. */
+  doubtful: Doubtful[] = [];
 
   get size() {
     return this.items.length;
@@ -38,12 +54,18 @@ export class FewShotClassifier {
     return this.items.length;
   }
 
+  /** Frase a la que pertenece el ejemplo número `i` (el mismo orden que usa `leaveOneOut`). */
+  phraseOf(i: number) {
+    return this.items[i]?.phraseId;
+  }
+
   get phraseCount() {
     return new Set(this.items.map((i) => i.phraseId)).size;
   }
 
-  fit(samples: { phraseId: string; emb: Embedded }[]) {
+  fit(samples: { id?: string; phraseId: string; emb: Embedded }[]) {
     this.items = [];
+    this.doubtful = [];
     if (!samples.length) return;
     const { L, D } = samples[0].emb;
     this.L = L;
@@ -73,7 +95,7 @@ export class FewShotClassifier {
     this.mean = mean;
     this.std = sq;
 
-    this.items = samples.map((s) => ({ phraseId: s.phraseId, x: this.normalize(s.emb.x) }));
+    this.items = samples.map((s) => ({ id: s.id, phraseId: s.phraseId, x: this.normalize(s.emb.x) }));
     this.scale = this.estimateScale();
   }
 
@@ -87,10 +109,11 @@ export class FewShotClassifier {
     return out;
   }
 
-  /** Mediana de la distancia de cada ejemplo a su vecino más cercano de la misma frase. */
+  /** Mediana de la distancia de cada ejemplo a su vecino más cercano de la misma frase. Además aparta los ejemplos dudosos. */
   private estimateScale(): number {
     const intra: number[] = [];
     const inter: number[] = [];
+    const nearestSame: number[] = [];
     for (let i = 0; i < this.items.length; i++) {
       let bestSame = Infinity;
       let bestOther = Infinity;
@@ -100,13 +123,44 @@ export class FewShotClassifier {
         if (this.items[i].phraseId === this.items[j].phraseId) bestSame = Math.min(bestSame, d);
         else bestOther = Math.min(bestOther, d);
       }
+      nearestSame.push(bestSame);
       if (bestSame < Infinity) intra.push(bestSame);
       if (bestOther < Infinity) inter.push(bestOther);
     }
-    const median = (a: number[]) => a.sort((x, y) => x - y)[Math.floor(a.length / 2)];
-    if (intra.length) return Math.max(median(intra), 1e-3);
-    if (inter.length) return Math.max(median(inter) * 0.4, 1e-3);
-    return 1;
+    const median = (a: number[]) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
+    let scale = 1;
+    if (intra.length) scale = Math.max(median(intra), 1e-3);
+    else if (inter.length) scale = Math.max(median(inter) * 0.4, 1e-3);
+    this.dropDoubtful(nearestSame, scale);
+    return scale;
+  }
+
+  private dropDoubtful(nearestSame: number[], scale: number) {
+    const byPhrase = new Map<string, number[]>();
+    this.items.forEach((it, i) => {
+      if (!Number.isFinite(nearestSame[i])) return;
+      const list = byPhrase.get(it.phraseId);
+      if (list) list.push(i);
+      else byPhrase.set(it.phraseId, [i]);
+    });
+    const drop = new Set<Prepared>();
+    for (const [phraseId, idx] of byPhrase) {
+      if (idx.length < MIN_FOR_DOUBT) continue;
+      const sorted = idx.map((i) => nearestSame[i]).sort((a, b) => a - b);
+      const typical = Math.max(sorted[Math.floor(sorted.length / 2)], 1e-3);
+      const flagged = idx
+        .map((i) => ({ i, ratio: nearestSame[i] / typical }))
+        .filter((x) => x.ratio > DOUBTFUL_RATIO && nearestSame[x.i] > DOUBTFUL_GLOBAL * scale)
+        .sort((a, b) => b.ratio - a.ratio);
+      let left = idx.length;
+      for (const f of flagged) {
+        if (left - 1 < MIN_FOR_DOUBT - 1) break;
+        left--;
+        drop.add(this.items[f.i]);
+        this.doubtful.push({ id: this.items[f.i].id, phraseId, ratio: f.ratio });
+      }
+    }
+    if (drop.size) this.items = this.items.filter((it) => !drop.has(it));
   }
 
   /** Qué frase elegiría cada ejemplo si no existiera él mismo. Sirve para medir la precisión con tus propios datos. */

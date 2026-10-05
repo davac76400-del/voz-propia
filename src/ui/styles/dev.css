@@ -790,3 +790,26 @@
     width: 100%;
   }
 }
+
+/* Entrenamiento */
+.train { display: grid; gap: var(--s-4); margin-top: var(--s-5); }
+.train__head { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: var(--s-2) var(--s-4); }
+.train__big { margin: 0; font: 800 clamp(2.6rem, 8vw, 3.6rem) / 1 var(--font-display); color: var(--ink); }
+.train__big small { font-size: 0.5em; margin-left: 2px; }
+.train__lead { margin: 0; color: var(--ink); font-size: var(--fs-md); }
+.train__spark { grid-column: 1 / -1; width: 100%; height: 44px; }
+.train__spark polyline { fill: none; stroke: var(--ok); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+.train__tiers { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.train__tier { padding: 8px 14px; border-radius: var(--r-pill); font-size: var(--fs-sm); font-weight: 700; background: var(--line); color: var(--ink); }
+.train__tier b { font-size: var(--fs-md); }
+.train__tier--lista { background: var(--ok-soft); color: var(--ok); }
+.train__tier--mejorando { background: var(--warn-soft); color: var(--warn); }
+.train__sub { margin: 0; }
+.train__list { display: grid; gap: var(--s-2); margin: 0; padding: 0; list-style: none; }
+.train__list li { display: grid; grid-template-columns: 1fr auto; gap: 2px var(--s-3); padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-md); }
+.train__list small { grid-column: 1 / -1; color: var(--ink); opacity: 0.75; font-size: var(--fs-sm); }
+.train__pct { font-weight: 800; color: var(--ink); }
+.train__pairs { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.train__pair { padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--r-pill); font-size: var(--fs-sm); font-weight: 600; color: var(--ink); }
+.train__pair i { font-style: normal; opacity: 0.6; }
+.dash__live.is-idle i { animation: none; opacity: 0.5; }

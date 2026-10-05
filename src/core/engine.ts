@@ -5,6 +5,8 @@ import { mouthActivity, prepareFrames } from './learn/embed';
 import { TARGET_LEN, withDeltas } from './learn/sequence';
 import { sliceSequence, WordDecoder, type DecodedWord } from './learn/decoder';
 import { bigramBonus } from './language/spanish';
+import { learnedBonus, recordSentence, setSeeds, transitionCount } from './language/learned';
+import { pushSnapshot, readHistory, tierOf, type TrainingSnapshot, type WordHealth } from './learn/progress';
 import { db, uid } from './storage/db';
 import type { LipSequence, Phrase, Prediction, Sample } from './types';
 import { DEFAULT_PHRASES } from '../data/default-phrases';
@@ -30,6 +32,13 @@ class Engine {
   private neural: NeuralEncoder | null = null;
   private listeners = new Set<Listener>();
   encoderName = 'Geometría de labios';
+  /** Quién decide si se entrena sola tras cada cambio (solo el programador, para no gastar batería del usuario). */
+  autoTrainWhen: () => boolean = () => false;
+  training = false;
+  lastTraining: TrainingSnapshot | null = readHistory().at(-1) ?? null;
+  /** Se avisa al terminar una medición automática, con la anterior para poder decir si mejoró. */
+  onTrained: ((now: TrainingSnapshot, before: TrainingSnapshot | null) => void) | null = null;
+  private trainTimer = 0;
 
   onChange(fn: Listener) {
     this.listeners.add(fn);
@@ -83,11 +92,96 @@ class Engine {
   private async retrain() {
     const valid = new Set(this.phrases.map((p) => p.id));
     const embedded = await Promise.all(
-      this.samples.filter((s) => valid.has(s.phraseId)).map(async (s) => ({ phraseId: s.phraseId, emb: await this.embed(s.seq) })),
+      this.samples.filter((s) => valid.has(s.phraseId)).map(async (s) => ({ id: s.id, phraseId: s.phraseId, emb: await this.embed(s.seq) })),
     );
     this.classifier.fit(embedded);
     this.decoderStale = true;
+    this.learnTransitions();
     this.emit();
+    this.scheduleTraining();
+  }
+
+  /** Frases largas del programador que se pueden partir en palabras ya conocidas: de ahí salen parejas de palabras. */
+  private learnTransitions() {
+    const known = this.phrases.map((p) => p.text.trim().toLowerCase()).filter(Boolean).sort((a, b) => b.length - a.length);
+    const sentences: string[][] = [];
+    for (const p of this.phrases) {
+      const text = p.text.trim().toLowerCase();
+      if (!/\s/.test(text)) continue;
+      const parts: string[] = [];
+      let rest = text;
+      while (rest) {
+        const hit = known.find((k) => k !== text && (rest === k || rest.startsWith(k + ' ')));
+        if (!hit) break;
+        parts.push(hit);
+        rest = rest.slice(hit.length).trim();
+      }
+      if (!rest && parts.length >= 2) sentences.push(parts);
+    }
+    setSeeds(sentences);
+  }
+
+  /** Una frase armada y aceptada: la app aprende qué palabras van juntas. */
+  recordSentence(phraseIds: string[]) {
+    recordSentence(phraseIds.map((id) => this.phrase(id)?.text ?? '').filter(Boolean));
+  }
+
+  /** Tras subir o cambiar ejemplos, mide en segundo plano cómo va cada palabra (solo si está activado). */
+  private scheduleTraining() {
+    clearTimeout(this.trainTimer);
+    if (!this.autoTrainWhen() || this.classifier.phraseCount < 2) return;
+    this.trainTimer = window.setTimeout(() => void this.trainNow(), 2500);
+  }
+
+  /** Mide y guarda cómo va cada palabra. Con `quick` revisa menos ejemplos para no trabar la pantalla. */
+  async trainNow(onProgress?: (done: number, total: number) => void, quick = true): Promise<TrainingSnapshot | null> {
+    if (this.training) return null;
+    this.training = true;
+    this.emit();
+    try {
+      const r = await this.evaluate(onProgress, quick ? 160 : 400);
+      const doubtfulBy = new Map<string, number>();
+      for (const d of this.classifier.doubtful) doubtfulBy.set(d.phraseId, (doubtfulBy.get(d.phraseId) ?? 0) + 1);
+      const rowBy = new Map(r.rows.map((row) => [row.phraseId, row]));
+      const health: WordHealth[] = this.phrases
+        .filter((p) => this.sampleCount(p.id) > 0)
+        .map((p) => {
+          const row = rowBy.get(p.id);
+          const accuracy = row && row.total ? row.correct / row.total : null;
+          const samples = this.sampleCount(p.id);
+          return {
+            phraseId: p.id,
+            text: p.text,
+            samples,
+            accuracy,
+            tier: tierOf(samples, accuracy, READY_SAMPLES),
+            confusedWith: row ? row.confused.slice(0, 2).map((c) => c.text) : [],
+            doubtful: doubtfulBy.get(p.id) ?? 0,
+          };
+        })
+        .sort((a, b) => (a.accuracy ?? -1) - (b.accuracy ?? -1));
+      const snap: TrainingSnapshot = {
+        at: Date.now(),
+        words: health.length,
+        samples: this.samples.length,
+        accuracy: r.total ? r.correct / r.total : null,
+        ready: health.filter((h) => h.tier === 'lista').length,
+        health,
+        transitions: transitionCount(),
+      };
+      const { previous } = pushSnapshot(snap);
+      this.lastTraining = snap;
+      this.onTrained?.(snap, previous);
+      return snap;
+    } finally {
+      this.training = false;
+      this.emit();
+    }
+  }
+
+  /** Ejemplos que se dejaron fuera por no parecerse a los demás de su palabra. */
+  get doubtfulSamples() {
+    return this.classifier.doubtful;
   }
 
   sampleCount(phraseId: string) {
@@ -140,7 +234,11 @@ class Engine {
     const words = await this.decoder.decode(seq, {
       limitFor: (id) => this.limitFor(id),
       searchFactor: 1.35,
-      bonus: (prev, id) => bigramBonus(prev ? (this.phrase(prev)?.text ?? null) : null, this.phrase(id)?.text ?? ''),
+      bonus: (prev, id) => {
+        const before = prev ? (this.phrase(prev)?.text ?? null) : null;
+        const word = this.phrase(id)?.text ?? '';
+        return bigramBonus(before, word) + learnedBonus(before, word);
+      },
     });
     return words.map((w) => ({ ...w, seq: sliceSequence(seq, w.start, w.end) }));
   }
@@ -222,11 +320,11 @@ class Engine {
   }
 
   /** Mide la precisión con los ejemplos que ya hay: cada uno se clasifica sin contarse a sí mismo. */
-  async evaluate(onProgress?: (done: number, total: number) => void) {
+  async evaluate(onProgress?: (done: number, total: number) => void, maxQueries = 400) {
     const textOf = (id: string) => this.phrase(id)?.text ?? '?';
     const n = this.classifier.itemCount;
-    const stride = n > 400 ? Math.ceil(n / 400) : 1;
-    const perPhrase = new Map<string, { total: number; correct: number; confused: Map<string, number> }>();
+    const stride = n > maxQueries ? Math.ceil(n / maxQueries) : 1;
+    const perPhrase = new Map<string, { id: string; total: number; correct: number; confused: Map<string, number> }>();
     let total = 0;
     let correct = 0;
     let done = 0;
@@ -239,7 +337,7 @@ class Engine {
       }
       if (!r) continue;
       const name = textOf(r.actual);
-      const row = perPhrase.get(name) ?? perPhrase.set(name, { total: 0, correct: 0, confused: new Map() }).get(name)!;
+      const row = perPhrase.get(name) ?? perPhrase.set(name, { id: r.actual, total: 0, correct: 0, confused: new Map() }).get(name)!;
       row.total++;
       total++;
       if (r.actual === r.predicted) {
@@ -251,6 +349,7 @@ class Engine {
       }
     }
     const rows = [...perPhrase].map(([text, v]) => ({
+      phraseId: v.id,
       text,
       total: v.total,
       correct: v.correct,
