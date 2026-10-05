@@ -135,6 +135,29 @@ export class FewShotClassifier {
     return { actual: me.phraseId, predicted: best };
   }
 
+  /**
+   * Qué tan lejos queda la toma de la frase más parecida, en veces la variación normal entre ejemplos
+   * (1 = como cualquier ejemplo propio). Sirve cuando hay una sola frase y no hay contra qué comparar.
+   */
+  closeness(emb: Embedded): { phraseId: string; ratio: number } | null {
+    if (!this.items.length || emb.L !== this.L || emb.D !== this.D) return null;
+    const q = this.normalize(emb.x);
+    const perPhrase = new Map<string, number[]>();
+    for (const it of this.items) {
+      const d = dtw(q, it.x, this.L, this.D);
+      const list = perPhrase.get(it.phraseId);
+      if (list) list.push(d);
+      else perPhrase.set(it.phraseId, [d]);
+    }
+    let best: { phraseId: string; distance: number } | null = null;
+    for (const [phraseId, ds] of perPhrase) {
+      ds.sort((a, b) => a - b);
+      const distance = ds.length >= 3 ? (ds[0] + ds[1]) / 2 : ds[0];
+      if (!best || distance < best.distance) best = { phraseId, distance };
+    }
+    return best ? { phraseId: best.phraseId, ratio: best.distance / this.scale } : null;
+  }
+
   predict(emb: Embedded, autoSpeakThreshold: number, topK = 3): Prediction {
     if (!this.items.length || emb.L !== this.L || emb.D !== this.D) {
       return { candidates: [], confidence: 0, ambiguous: true };

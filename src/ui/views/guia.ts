@@ -141,7 +141,8 @@ function template() {
             <li><b>3</b><span>Escucha cómo suena tu voz.</span></li>
             <li><b>4</b><span>Si duda, toca la palabra correcta.</span></li>
           </ol>
-          <button class="g-start__btn" type="button" disabled>${icon('lock', 20)}<span>Muy pronto</span></button>
+          <button class="g-start__btn" type="button" data-start disabled>${icon('lock', 20)}<span>Muy pronto</span></button>
+          <p class="g-start__live" data-start-note hidden></p>
           <div class="g-more">
             <button class="g-again" type="button" data-top>${icon('arrow-up', 18, 2.4)}<span>Ver la guía otra vez desde el inicio</span></button>
             <button class="g-again" type="button" data-go-page="ayuda">${icon('info', 18, 2.4)}<span>Datos y cómo te ayuda</span></button>
@@ -386,6 +387,22 @@ export function guiaView(root: HTMLElement) {
   };
   renderWords();
 
+  /* ---------- Botón «Iniciar a utilizar»: se abre solo cuando ya hay palabras listas ---------- */
+
+  const startBtn = el.querySelector<HTMLButtonElement>('[data-start]')!;
+  const startNote = el.querySelector<HTMLElement>('[data-start-note]')!;
+  const renderStart = () => {
+    const n = engine.trainedPhrases.length;
+    startBtn.disabled = n === 0;
+    startBtn.classList.toggle('is-ready', n > 0);
+    startBtn.innerHTML = n
+      ? `${icon('camera', 22, 2.2)}<span>Activar cámara y empezar</span>`
+      : `${icon('lock', 20)}<span>Muy pronto</span>`;
+    startNote.hidden = n === 0;
+    startNote.textContent = n ? `Ya hay ${n} ${n === 1 ? 'palabra lista' : 'palabras listas'}. Se actualizan solas.` : '';
+  };
+  renderStart();
+
   /* ---------- Lo que más se pide en un hospital (solo información, sin sonido) ---------- */
 
   const hospPanel = el.querySelector<HTMLElement>('[data-hosp-panel]')!;
@@ -431,11 +448,13 @@ export function guiaView(root: HTMLElement) {
       setHosp(next, true);
     }),
     on(el, 'click', '[data-go-page]', (_, b) => go(b.dataset.goPage as 'ayuda' | 'consejos')),
+    on(el, 'click', '[data-start]', () => go('usar')),
     on(el, 'click', '[data-go]', (_, b) => {
       const c = chapters[Number(b.dataset.go)];
       if (c) pageTo(Math.round(c.getBoundingClientRect().top + scrollY));
     }),
     engine.onChange(renderWords),
+    engine.onChange(renderStart),
   ];
 
   return () => {

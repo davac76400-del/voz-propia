@@ -9,6 +9,7 @@ import './ui/styles/guia.css';
 import './ui/styles/ayuda.css';
 import './ui/styles/consejos.css';
 import './ui/styles/dev.css';
+import './ui/styles/usar.css';
 
 import { go, hashRoute, startRouter, type Route, type View } from './app/router';
 import { loadSettings, state, updateSettings } from './app/state';
@@ -32,6 +33,7 @@ import { hablarView } from './ui/views/hablar';
 import { consejosView } from './ui/views/consejos';
 import { panelView } from './ui/views/panel';
 import { tableroView } from './ui/views/tablero';
+import { usarView } from './ui/views/usar';
 
 type Kind = Role | 'inicio';
 
@@ -44,7 +46,7 @@ interface Mode {
 const MODES: Record<Role, Mode> = {
   usuario: {
     home: 'guia',
-    views: { guia: guiaView, ayuda: ayudaView, consejos: consejosView },
+    views: { guia: guiaView, usar: usarView, ayuda: ayudaView, consejos: consejosView },
     nav: [],
   },
   programador: {

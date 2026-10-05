@@ -450,6 +450,18 @@
   cursor: not-allowed;
 }
 
+.g-start__btn.is-ready {
+  border: 2px solid transparent;
+  background: var(--t-a2);
+  color: var(--t-ink);
+  box-shadow: 0 18px 44px -16px rgb(var(--t-a2-rgb) / 0.8);
+  cursor: pointer;
+  transition: transform 0.2s var(--ease-out), box-shadow 0.2s;
+}
+.g-start__btn.is-ready:active { transform: scale(0.97); }
+@media (hover: hover) { .g-start__btn.is-ready:hover { transform: translateY(-2px); box-shadow: 0 24px 54px -16px rgb(var(--t-a2-rgb) / 0.95); } }
+.g-start__live { margin: 0; font-family: var(--font-body); font-size: 1.02rem; color: var(--t-a2); font-weight: 700; }
+
 /* ---------- Botón «Regresar al inicio»: se llena de agua mientras se mantiene presionado ---------- */
 
 .water-back {

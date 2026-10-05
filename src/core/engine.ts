@@ -98,6 +98,16 @@ class Engine {
     return this.phrases.find((p) => p.id === id);
   }
 
+  /**
+   * Con una sola frase preparada no hay con qué compararla: se mide qué tan parecida es la toma a los ejemplos.
+   * `ratio` 1 es como un ejemplo propio; mientras más grande, menos se parece.
+   */
+  async verify(seq: LipSequence): Promise<{ phrase: Phrase; ratio: number } | null> {
+    const r = this.classifier.closeness(await this.embed(seq));
+    const phrase = r && this.phrase(r.phraseId);
+    return r && phrase ? { phrase, ratio: r.ratio } : null;
+  }
+
   async recognize(seq: LipSequence, threshold: number): Promise<Prediction> {
     const pred = this.classifier.predict(await this.embed(seq), threshold);
     // Con una sola frase entrenada no hay contra qué comparar: siempre se pide confirmar.
