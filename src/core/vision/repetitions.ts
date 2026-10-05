@@ -132,23 +132,6 @@ function splitAtValleys(r: { a: number; b: number }, signal: number[], frames: F
   return out;
 }
 
-/** Si el audio salió como «Mi Mi Mi Mi», la frase es «Mi». */
-export function collapseRepeats(text: string): string {
-  const words = text
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (words.length < 2) return text.trim();
-  const norm = words.map((w) => w.toLowerCase().replace(/[.,;:!?¡¿"']/g, ''));
-  for (let n = 1; n <= Math.floor(words.length / 2); n++) {
-    if (words.length % n) continue;
-    let ok = true;
-    for (let i = n; i < words.length && ok; i++) ok = norm[i] === norm[i % n];
-    if (ok) return words.slice(0, n).join(' ').replace(/[,;.!?]+$/g, '');
-  }
-  return text.trim();
-}
-
 /** Línea de la apertura de la boca para ver de un vistazo cómo se movió. */
 export function sparkline(frames: FrameFeatures[], w = 84, h = 26): string {
   if (frames.length < 2) return '';

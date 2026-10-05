@@ -7,6 +7,7 @@ const OWN: string[] = [
   'El decodificador que separa una frase en palabras y escoge la mejor combinación.',
   'El modelo de frases en español y lo que la app aprende de qué palabras van juntas.',
   'El entrenamiento que mide cada palabra al subir ejemplos y aparta los ejemplos dudosos.',
+  'La revisión de patrones: en un video con la misma palabra repetida, agrupa las repeticiones que se ven iguales y usa solo las que se repiten varias veces. Solo mira los labios; el audio no se usa.',
   'Las cuentas con correo, usuario y contraseña de 4 números, y todo el diseño, las animaciones y los textos.',
 ];
 
@@ -25,7 +26,6 @@ const TEAM_DID: string[] = [
 const THIRD: [string, string, string][] = [
   ['MediaPipe Face Landmarker (Google)', 'Encuentra los puntos de la cara y la boca en la cámara. Es un modelo ya entrenado por Google.', 'Apache 2.0'],
   ['ONNX Runtime Web (Microsoft)', 'Prepara el uso de un modelo opcional. Hoy no se incluye ninguno.', 'MIT'],
-  ['Transformers.js y Whisper base (OpenAI)', 'Solo en modo programador: escribe el texto de un video para nombrar una frase. No se usa al hablar.', 'Apache 2.0 y MIT'],
   ['Three.js', 'Las escenas en 3D del inicio y la guía.', 'MIT'],
   ['Supabase', 'Cuentas y ejemplos compartidos por el programador.', 'MIT (cliente)'],
   ['Lucide', 'Los íconos.', 'ISC'],
@@ -66,7 +66,6 @@ export function creditosView(root: HTMLElement) {
       <h2>Cómo se usa la IA dentro de la app</h2>
       <ul class="cr__list">
         <li><b>Al usarla:</b> no hay chatbot ni IA que escriba textos o genere imágenes. La lectura de labios usa los puntos de la cara que da el modelo de Google y los cálculos del equipo.</li>
-        <li><b>Solo en modo programador:</b> Whisper escribe el texto de un video para nombrar una frase. La persona que usa la app no lo ve.</li>
         <li><b>Idea de investigación:</b> aprender palabras con pocos ejemplos está inspirado en LipLearner (Su, Fang y Rekimoto, CHI 2023).</li>
       </ul>
 

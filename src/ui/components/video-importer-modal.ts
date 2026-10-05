@@ -4,9 +4,9 @@ import type { LipSequence } from '../../core/types';
 import { FEATURE_DIMS } from '../../core/vision/lip-features';
 import { packRaw } from '../../core/vision/raw-store';
 import { oneWordProblem, phraseFromFilename } from '../../core/vision/filename-phrase';
-import { collapseRepeats, splitRepetitions, sparkline, type Pause, type Repetition } from '../../core/vision/repetitions';
+import { checkPatterns, REASON_TEXT, stallRatio, type PatternReport, type Reason } from '../../core/vision/pattern-check';
+import { splitRepetitions, sparkline, type Pause, type Repetition } from '../../core/vision/repetitions';
 import { processVideoFile, type FrameFeatures } from '../../core/vision/video-processor';
-import { transcribeVideoAudio } from '../../core/vision/transcriber';
 import { publishPhrase, syncShared } from '../../core/shared-sync';
 import { DEFAULT_FOLDER, createFolder, insertClips, listFolders } from '../../core/supabase';
 import { esc } from '../dom';
@@ -14,17 +14,22 @@ import { icon } from '../icons';
 import { toast } from './toast';
 
 const MIN_FRAMES = 8;
-const SUSPECT_FACTOR = 1.8;
-const SCORE_SAMPLE = 30;
+/** Una repetición con menos de esta fracción del movimiento típico se descarta: la boca casi no se movió. */
+const QUIET_FRACTION = 0.35;
 const INSERT_BATCH = 10;
 const NEW_FOLDER = '__new';
+
+type RepReason = Reason | 'quieta';
+
+const REASON_LABEL: Record<RepReason, string> = { ...REASON_TEXT, quieta: 'casi no se movió la boca' };
 
 interface Rep {
   rep: Repetition;
   keep: boolean;
   suspect: boolean;
-  /** Distancia típica a las demás repeticiones: menor es más representativa. */
-  score: number;
+  /** Letra del patrón al que pertenece (A, B…). */
+  pattern: string;
+  reason: RepReason | null;
 }
 
 interface Group {
@@ -36,6 +41,9 @@ interface Group {
   durationMs: number;
   pause: Pause;
   reps: Rep[];
+  report: PatternReport | null;
+  /** Palabra ya guardada a la que más se parece lo que se ve en el video. */
+  similarTo: { text: string; ratio: number } | null;
 }
 
 const FRAMING_TIP =
@@ -53,30 +61,82 @@ const median = (v: number[]) => {
   return s[Math.floor(s.length / 2)];
 };
 
-/** Parte el video en repeticiones y marca como dudosas las que no se parecen a las demás. */
-async function analyze(g: Group) {
+const plain = (t: string) => t.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+/** Aviso si lo que se ve se parece mucho a otra palabra ya guardada y no al nombre escrito. */
+function similarWarning(g: Group): string {
+  const sim = g.similarTo;
+  if (!sim || sim.ratio > 1.4 || !g.phrase.trim() || plain(g.phrase) === plain(sim.text)) return '';
+  return `Ojo: lo que se ve en el video se parece mucho a «${sim.text}», que ya tienes guardada. Revisa que el nombre sea el correcto.`;
+}
+
+/**
+ * Parte el video en repeticiones (solo con los labios, el audio no cuenta), agrupa las que se ven iguales y se
+ * queda con los patrones que se repiten varias veces. Descarta los raros, los de pocas veces, los que dejaron
+ * de moverse y donde el video se trabó.
+ */
+export async function analyzeGroup(g: Group) {
   let found = splitRepetitions(g.frames, g.pause);
   if (!found.length && g.durationMs <= 4000 && g.frames.length >= MIN_FRAMES) {
     found = [{ startMs: g.frames[0].t, endMs: g.frames[g.frames.length - 1].t, frames: g.frames }];
   }
-  g.reps = found.map((rep) => ({ rep, keep: true, suspect: false, score: 0 }));
-  if (g.reps.length < 4) return;
+  g.reps = found.map((rep) => ({ rep, keep: true, suspect: false, pattern: '-', reason: null }));
+  g.report = null;
+  g.similarTo = null;
+  const n = g.reps.length;
+  if (!n) return;
 
-  const emb = await Promise.all(g.reps.map((r) => engine.embed(toLipSequence(r.rep))));
-  const L = emb[0].L;
-  const D = emb[0].D;
-  g.reps.forEach((r, i) => {
-    const others = emb.map((_, j) => j).filter((j) => j !== i);
-    const pick = others.length > SCORE_SAMPLE ? others.filter((_, k) => k % Math.ceil(others.length / SCORE_SAMPLE) === 0) : others;
-    r.score = median(pick.map((j) => dtw(emb[i].x, emb[j].x, L, D)));
-  });
-  const typical = median(g.reps.map((r) => r.score));
-  const dur = median(g.reps.map((r) => r.rep.endMs - r.rep.startMs));
-  for (const r of g.reps) {
-    const len = r.rep.endMs - r.rep.startMs;
-    r.suspect = r.score > typical * SUSPECT_FACTOR || len > dur * 2.5 || len < dur * 0.4;
-    r.keep = !r.suspect;
+  const seqs = g.reps.map((r) => toLipSequence(r.rep));
+  const dist: number[][] = Array.from({ length: n }, () => new Array<number>(n).fill(0));
+  if (n >= 4) {
+    const emb = await Promise.all(seqs.map((q) => engine.embed(q)));
+    const { L, D } = emb[0];
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) dist[i][j] = dist[j][i] = dtw(emb[i].x, emb[j].x, L, D);
   }
+  const report = checkPatterns(
+    g.reps.map((r) => ({ startMs: r.rep.startMs, endMs: r.rep.endMs, stallRatio: stallRatio(r.rep.frames.map((f) => f.raw)) })),
+    dist,
+  );
+  const activity = seqs.map((q) => engine.activity(q));
+  const typical = median(activity);
+  g.reps.forEach((r, i) => {
+    const v = report.verdicts[i];
+    r.pattern = v.pattern;
+    r.reason = v.reason;
+    r.suspect = !v.ok;
+    if (v.ok && n >= 4 && activity[i] < typical * QUIET_FRACTION) {
+      r.reason = 'quieta';
+      r.suspect = true;
+    }
+    r.keep = !r.suspect;
+  });
+  g.report = report;
+
+  // ¿Se parece a otra palabra que ya tienes? Se compara la repetición más representativa.
+  const good = g.reps.map((_, i) => i).filter((i) => !g.reps[i].suspect);
+  if (good.length) {
+    const medoid = good.reduce((best, i) => (good.reduce((s, j) => s + dist[i][j], 0) < good.reduce((s, j) => s + dist[best][j], 0) ? i : best), good[0]);
+    const v = await engine.verify(seqs[medoid]);
+    if (v) g.similarTo = { text: v.phrase.text, ratio: v.ratio };
+  }
+}
+
+function patternSummary(g: Group): string {
+  const r = g.report;
+  if (!r) return '';
+  const lines: string[] = [];
+  const used = g.reps.filter((x) => x.keep).length;
+  if (r.tooFew) lines.push('Hay menos de 4 repeticiones: no alcanzo a comparar patrones. Repite la palabra más veces en el mismo video.');
+  else if (r.noClearPattern) lines.push('No encontré un patrón que se repita. Di la palabra igual cada vez, con una pausa corta entre una y otra.');
+  else {
+    const main = r.clusters.filter((c) => c.accepted);
+    lines.push(`${main.length > 1 ? 'Patrones que sirven' : 'Patrón que sirve'}: ${main.map((c) => `${c.label} (${c.members.length} veces)`).join(', ')}. Se usan ${used} de ${g.reps.length} repeticiones.`);
+  }
+  if (r.cadence) {
+    const gaps = r.longGaps ? ` · ${r.longGaps} pausa${r.longGaps > 1 ? 's' : ''} larga${r.longGaps > 1 ? 's' : ''} (¿se trabó el video?)` : '';
+    lines.push(`La dices una vez cada ${(r.cadence.medianMs / 1000).toFixed(1)} s, ${r.cadence.regular ? 'a un ritmo parejo' : 'con un ritmo irregular'}${gaps}.`);
+  }
+  return lines.map((l) => `<p class="dev-meta">${esc(l)}</p>`).join('');
 }
 
 export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
@@ -112,8 +172,9 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
       <button class="btn btn--primary btn--lg" id="imp-pick" type="button">${icon('upload', 20)}<span>Elegir videos</span></button>
 
       <div class="dev-help">
-        <p><b>Nombre del archivo:</b> <code>voz-frase.mp4</code> o <code>frase-voz.mp4</code>. Ejemplo: <code>voz-me.mp4</code> guarda «Me» y <code>voz-tengo-sed.mp4</code> guarda «Tengo sed».</p>
-        <p><b>Repetir ayuda:</b> di la frase muchas veces en el mismo video, con una pausa corta entre cada una. Cada vez que la dices cuenta como un ejemplo.</p>
+        <p><b>Nombre del archivo:</b> <code>voz-palabra.mp4</code> o <code>palabra-voz.mp4</code>. Ejemplo: <code>voz-me.mp4</code> guarda «Me». Una sola palabra por video.</p>
+        <p><b>Solo cuentan los labios:</b> el audio no se usa, así que no importa si sale tarde o se desfasa.</p>
+        <p><b>Repetir ayuda:</b> di la palabra muchas veces en el mismo video, con una pausa corta entre cada una. La app agrupa las repeticiones que se ven iguales y usa solo los patrones que se repiten varias veces; descarta las raras, las que salen muy pocas veces y las del video trabado.</p>
         <p><b>Qué debe verse:</b> ${esc(FRAMING_TIP)} Con solo labios la lectura es experimental: la cara completa da mejores resultados.</p>
       </div>
 
@@ -167,16 +228,9 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
       throw new Error(`No pude leer los labios de este video. ${FRAMING_TIP}`);
     }
 
-    let phrase = phraseFromFilename(file.name) ?? '';
-    if (!phrase) {
-      try {
-        const heard = await transcribeVideoAudio(file, (m, pct) => say(`${label} · ${m}`, pct));
-        phrase = collapseRepeats(heard.map((s) => s.text).join(' '));
-      } catch (err) {
-        console.warn('Transcripción no disponible:', err);
-        note = 'En algún video no pude adivinar la frase por el audio (¿sin internet?). Escríbela tú, o renombra el archivo como «voz-frase».';
-      }
-    }
+    // Solo cuentan los labios: el nombre sale del archivo o de lo que escribas, nunca del audio.
+    const phrase = phraseFromFilename(file.name) ?? '';
+    if (!phrase) note = 'En algún video falta el nombre. Escribe la palabra, o renombra el archivo como «voz-palabra».';
 
     say(`${label} · buscando las repeticiones…`);
     const g: Group = {
@@ -188,8 +242,10 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
       durationMs: video.durationMs,
       pause: 'normal',
       reps: [],
+      report: null,
+      similarTo: null,
     };
-    await analyze(g);
+    await analyzeGroup(g);
     return g;
   };
 
@@ -242,8 +298,10 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
             <input class="input" type="text" value="${esc(g.phrase)}" placeholder="Escribe una sola palabra" data-phrase>
           </label>
           <p class="dev-warn" data-one-word ${oneWordProblem(g.phrase) ? '' : 'hidden'}>${esc(oneWordProblem(g.phrase) ?? '')}</p>
+          <p class="dev-warn" data-similar ${similarWarning(g) ? '' : 'hidden'}>${esc(similarWarning(g))}</p>
+          ${patternSummary(g)}
           <div class="dev-import__row">
-            <p class="dev-import__count"><b>${g.reps.length}</b> ${g.reps.length === 1 ? 'repetición encontrada' : 'repeticiones encontradas'}${suspects ? ` · <span class="dev-warn">${suspects} dudosa${suspects === 1 ? '' : 's'}</span>` : ''}</p>
+            <p class="dev-import__count"><b>${g.reps.length}</b> ${g.reps.length === 1 ? 'repetición encontrada' : 'repeticiones encontradas'}${suspects ? ` · <span class="dev-warn">${suspects} descartada${suspects === 1 ? '' : 's'}</span>` : ''}</p>
             <label class="dev-import__pause">
               <span>Pausa entre repeticiones</span>
               <select class="input" data-pause aria-label="Pausa entre repeticiones">
@@ -261,7 +319,7 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
                 <label>
                   <input type="checkbox" data-keep="${i}"${r.keep ? ' checked' : ''} aria-label="Usar la repetición ${i + 1}">
                   <svg viewBox="0 0 84 26" width="84" height="26" aria-hidden="true"><path d="${sparkline(r.rep.frames)}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  <span class="dev-rep__meta">${i + 1} · ${((r.rep.endMs - r.rep.startMs) / 1000).toFixed(1)} s${r.suspect ? ' · dudosa' : ''}</span>
+                  <span class="dev-rep__meta">${i + 1} · ${((r.rep.endMs - r.rep.startMs) / 1000).toFixed(1)} s${r.pattern !== '-' ? ` · patrón ${r.pattern}` : ''}${r.suspect && r.reason ? ` · descartada: ${REASON_LABEL[r.reason]}` : ''}</span>
                 </label>
               </li>`,
                 )
@@ -291,11 +349,18 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
     if (!input) return;
     const g = groupOf(input);
     if (g) g.phrase = input.value;
-    const warn = input.closest<HTMLElement>('[data-g]')?.querySelector<HTMLElement>('[data-one-word]');
+    const card = input.closest<HTMLElement>('[data-g]');
+    const warn = card?.querySelector<HTMLElement>('[data-one-word]');
     if (warn) {
       const msg = oneWordProblem(input.value);
       warn.hidden = !msg;
       warn.textContent = msg ?? '';
+    }
+    const sim = card?.querySelector<HTMLElement>('[data-similar]');
+    if (sim && g) {
+      const msg = similarWarning(g);
+      sim.hidden = !msg;
+      sim.textContent = msg;
     }
     q<HTMLElement>('#imp-save-label').textContent = saveLabel();
   });
@@ -316,7 +381,7 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
       if (!g) return;
       g.pause = pause.value as Pause;
       pause.disabled = true;
-      await analyze(g);
+      await analyzeGroup(g);
       render();
     }
   });
