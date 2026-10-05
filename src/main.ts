@@ -8,6 +8,7 @@ import './ui/styles/views.css';
 import './ui/styles/guia.css';
 import './ui/styles/ayuda.css';
 import './ui/styles/consejos.css';
+import './ui/styles/creditos.css';
 import './ui/styles/dev.css';
 import './ui/styles/usar.css';
 
@@ -26,6 +27,7 @@ import { bindWaterBack, waterBackHTML } from './ui/components/water-back';
 import { toast } from './ui/components/toast';
 import { icon } from './ui/icons';
 import { ajustesView } from './ui/views/ajustes';
+import { creditosView } from './ui/views/creditos';
 import { ayudaView } from './ui/views/ayuda';
 import { entrenarView } from './ui/views/entrenar';
 import { guiaView } from './ui/views/guia';
@@ -46,7 +48,7 @@ interface Mode {
 const MODES: Record<Role, Mode> = {
   usuario: {
     home: 'guia',
-    views: { guia: guiaView, usar: usarView, ayuda: ayudaView, consejos: consejosView },
+    views: { guia: guiaView, usar: usarView, ayuda: ayudaView, consejos: consejosView, creditos: creditosView },
     nav: [],
   },
   programador: {

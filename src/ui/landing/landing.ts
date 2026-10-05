@@ -35,7 +35,7 @@ interface Options {
   /** Se abrió desde la app (botón Cuenta): sin cargador, abre la cuenta y al terminar regresa a la app. */
   account?: boolean;
   onReturn?: () => void;
-  onChoose: (role: Role, page?: 'ayuda' | 'consejos') => void;
+  onChoose: (role: Role, page?: 'ayuda' | 'consejos' | 'creditos') => void;
 }
 
 const BALL_COLOR = '#2F69FF';
@@ -303,6 +303,7 @@ function template() {
         <div class="l-footer__cols">
           <div data-reveal><p class="l-footer__h">Voz Propia</p><ul>
             ${[['historia', 'Historia'], ['labios', 'Labios'], ['entrar', 'Entrar']].map(([id, t]) => `<li><a href="#${id}" data-scroll="${id}">${t}${icon('arrow-up-right', 13)}</a></li>`).join('')}
+            <li><a href="#creditos" data-credits>Herramientas y créditos${icon('arrow-up-right', 13)}</a></li>
           </ul></div>
           <div data-reveal style="--d:.08s"><p class="l-footer__h">Hecha para</p><ul>
             <li><span>Traqueostomía</span></li><li><span>Laringectomía</span></li><li><span>Terapia intensiva</span></li><li><span>Su familia</span></li>
@@ -1363,7 +1364,7 @@ export function mountLanding(app: HTMLElement, opts: Options) {
 
   let chosen: Role = 'usuario';
 
-  const enter = async (page?: 'ayuda' | 'consejos') => {
+  const enter = async (page?: 'ayuda' | 'consejos' | 'creditos') => {
     if (!session()) return openGate('elegir', true);
     root.classList.add('is-leaving');
     await sleep(motionOk ? 420 : 0);
@@ -1402,6 +1403,11 @@ export function mountLanding(app: HTMLElement, opts: Options) {
       if (t.closest('[data-ayuda]')) {
         chosen = 'usuario';
         return void enter('ayuda');
+      }
+      if (t.closest('[data-credits]')) {
+        e.preventDefault();
+        chosen = 'usuario';
+        return void enter('creditos');
       }
       if (t.closest('[data-tools]')) {
         chosen = 'usuario';
