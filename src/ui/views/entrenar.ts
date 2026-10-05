@@ -5,6 +5,7 @@ import { captureSequence, CaptureError, type Capture } from '../../core/vision/r
 import { recordAudio, speakPhrase, speakText, type AudioRecording } from '../../core/voice/speaker';
 import { CATEGORY_LABEL, ICON_CHOICES } from '../../data/default-phrases';
 import { createStage, type FaceState } from '../components/camera-stage';
+import { oneWordProblem } from '../../core/vision/filename-phrase';
 import { openVideoImporter } from '../components/video-importer-modal';
 import { toast } from '../components/toast';
 import { $, esc, on, reducedMotion, sleep, vibrate } from '../dom';
@@ -22,7 +23,7 @@ export function entrenarView(root: HTMLElement) {
         <header class="view-head">
           <div>
             <p class="kicker">[ Entrenar ]</p>
-            <h1>Enséñale cómo<br><span class="hl">dice cada frase.</span></h1>
+            <h1>Enséñale cómo<br><span class="hl">dice cada palabra.</span></h1>
           </div>
         </header>
 
@@ -32,11 +33,11 @@ export function entrenarView(root: HTMLElement) {
             <span>${done}<small>/${total}</small></span>
           </div>
           <div>
-            <h2>${done === 0 ? 'Empieza con Sí, No y una frase más' : done === total ? 'Todas las frases están listas' : 'Va muy bien'}</h2>
-            <p>Cada frase necesita ${TARGET} ejemplos de 5 segundos <b>de la persona que la va a usar</b>. Sostén el teléfono frente a su cara y que hable sin voz.</p>
+            <h2>${done === 0 ? 'Empieza con Sí, No y una palabra más' : done === total ? 'Todas las palabras están listas' : 'Va muy bien'}</h2>
+            <p>Cada palabra necesita ${TARGET} ejemplos de 5 segundos <b>de la persona que la va a usar</b>. Sostén el teléfono frente a su cara y que hable sin voz.</p>
           </div>
           <div class="row">
-            <button class="btn btn--primary" type="button" data-new>${icon('plus', 18)}<span>Nueva frase</span></button>
+            <button class="btn btn--primary" type="button" data-new>${icon('plus', 18)}<span>Nueva palabra</span></button>
             <button class="btn btn--soft" type="button" data-import-video>${icon('upload', 18)}<span>Cargar video</span></button>
           </div>
         </div>
@@ -216,7 +217,7 @@ function openTrainer(phrase: Phrase) {
       await engine.addSample(phrase.id, seq);
       vibrate([10, 40, 10]);
       const n = engine.sampleCount(phrase.id);
-      toast(n === TARGET ? '¡Frase lista! Ya la puedo reconocer.' : `Ejemplo ${n} guardado.`, { tone: 'ok' });
+      toast(n === TARGET ? '¡Palabra lista! Ya la puedo reconocer.' : `Ejemplo ${n} guardado.`, { tone: 'ok' });
     } catch (err) {
       if (err instanceof CaptureError && err.code === 'sin-rostro') toast('Se perdió tu boca de vista. Repite el ejemplo.', { tone: 'warn' });
     } finally {
@@ -231,7 +232,7 @@ function openTrainer(phrase: Phrase) {
       const blob = await rec.stop();
       rec = null;
       await engine.setAudio(phrase.id, blob);
-      toast('Voz guardada para esta frase.', { tone: 'ok' });
+      toast('Voz guardada para esta palabra.', { tone: 'ok' });
       renderStep();
       return;
     }
@@ -294,13 +295,13 @@ function openEditor(phrase?: Phrase) {
   dlg.innerHTML = `
     <form method="dialog" class="modal__inner" novalidate>
       <header class="sheet__head">
-        <div><p class="kicker">${phrase ? 'Editar frase' : 'Nueva frase'}</p><h2>${phrase ? esc(phrase.text) : '¿Qué quieres poder decir?'}</h2></div>
+        <div><p class="kicker">${phrase ? 'Editar palabra' : 'Nueva palabra'}</p><h2>${phrase ? esc(phrase.text) : '¿Qué palabra quieres poder decir?'}</h2></div>
         <button class="icon-btn" type="button" data-close aria-label="Cerrar">${icon('x', 20)}</button>
       </header>
       <label class="field">
-        <span class="field__label">Frase</span>
-        <input class="input" name="text" maxlength="60" required value="${esc(phrase?.text ?? '')}" placeholder="Por ejemplo: Quiero ver a mi hija" aria-describedby="text-err">
-        <span class="field__error" id="text-err" hidden>Escribe la frase (máximo 60 letras).</span>
+        <span class="field__label">Palabra</span>
+        <input class="input" name="text" maxlength="60" required value="${esc(phrase?.text ?? '')}" placeholder="Una sola palabra, por ejemplo: Cabeza" aria-describedby="text-err">
+        <span class="field__error" id="text-err" hidden>Escribe la palabra.</span>
       </label>
       <fieldset class="field">
         <legend class="field__label">Grupo</legend>
@@ -314,7 +315,7 @@ function openEditor(phrase?: Phrase) {
       </fieldset>
       <div class="row row--end">
         <button class="btn btn--ghost" type="button" data-close>Cancelar</button>
-        <button class="btn btn--primary" type="submit">${icon('check', 18)}<span>${phrase ? 'Guardar cambios' : 'Crear frase'}</span></button>
+        <button class="btn btn--primary" type="submit">${icon('check', 18)}<span>${phrase ? 'Guardar cambios' : 'Crear palabra'}</span></button>
       </div>
     </form>`;
   document.body.append(dlg);
@@ -326,7 +327,10 @@ function openEditor(phrase?: Phrase) {
     dlg.remove();
   };
   const validate = () => {
-    const ok = input.value.trim().length > 0;
+    const changed = !phrase || input.value.trim() !== phrase.text;
+    const problem = changed ? oneWordProblem(input.value) : null;
+    const ok = input.value.trim().length > 0 && !problem;
+    err.textContent = problem ?? 'Escribe la palabra.';
     err.hidden = ok;
     input.setAttribute('aria-invalid', String(!ok));
     return ok;
@@ -352,7 +356,7 @@ function openEditor(phrase?: Phrase) {
     const saved = await engine.savePhrase({ ...(phrase ?? {}), text: input.value.trim(), icon: chosenIcon, category: chosenCat });
     close();
     if (!phrase) {
-      toast('Frase creada. Ahora enséñame cómo la dices.', { action: { label: 'Entrenar', run: () => openTrainer(saved) } });
+      toast('Palabra creada. Ahora enséñame cómo la dices.', { action: { label: 'Entrenar', run: () => openTrainer(saved) } });
     }
   });
   dlg.addEventListener('close', () => dlg.remove());

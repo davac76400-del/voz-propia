@@ -13,3 +13,10 @@ export function phraseFromFilename(fileName: string): string | null {
   if (!phrase) return null;
   return phrase.charAt(0).toUpperCase() + phrase.slice(1);
 }
+
+/** Cada video y cada frase de la app es UNA palabra. Devuelve el aviso si hay más de una, o null si está bien. */
+export function oneWordProblem(text: string): string | null {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= 1) return null;
+  return `Son ${words.length} palabras («${words.join(' ')}»). Sube cada palabra por separado: la app arma las frases sola.`;
+}

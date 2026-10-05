@@ -9,7 +9,7 @@ import { learnedBonus, recordSentence, setSeeds, transitionCount } from './langu
 import { pushSnapshot, readHistory, tierOf, type TrainingSnapshot, type WordHealth } from './learn/progress';
 import { db, uid } from './storage/db';
 import type { LipSequence, Phrase, Prediction, Sample } from './types';
-import { DEFAULT_PHRASES } from '../data/default-phrases';
+import { DEFAULT_PHRASES, RETIRED_DEFAULTS } from '../data/default-phrases';
 
 type Listener = () => void;
 
@@ -58,8 +58,28 @@ class Engine {
     }
     // Los ejemplos de versiones anteriores (menos puntos) ya no sirven: se ignoran.
     this.samples = (await db.samples()).filter((x) => x.seq.dims === FEATURE_DIMS);
+    await this.syncDefaults();
     await this.retrain();
     void this.tryNeural();
+  }
+
+  /** Agrega las palabras recomendadas que falten (vacías, en orden) y quita las frases largas de fábrica sin ejemplos. */
+  private async syncDefaults() {
+    const key = (t: string) => t.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const retired = new Set(RETIRED_DEFAULTS.map(key));
+    for (const p of this.phrases.filter((x) => retired.has(key(x.text)) && !this.samples.some((s) => s.phraseId === x.id))) {
+      await db.deletePhrase(p.id);
+      this.phrases = this.phrases.filter((x) => x.id !== p.id);
+    }
+    const have = new Set(this.phrases.map((p) => key(p.text)));
+    let order = Math.max(-1, ...this.phrases.map((p) => p.order)) + 1;
+    const now = Date.now();
+    for (const d of DEFAULT_PHRASES) {
+      if (have.has(key(d.text))) continue;
+      const full: Phrase = { ...d, id: uid(), order: order++, createdAt: now };
+      await db.putPhrase(full);
+      this.phrases.push(full);
+    }
   }
 
   private async tryNeural() {

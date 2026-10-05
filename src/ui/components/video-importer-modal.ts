@@ -3,7 +3,7 @@ import { dtw } from '../../core/learn/dtw';
 import type { LipSequence } from '../../core/types';
 import { FEATURE_DIMS } from '../../core/vision/lip-features';
 import { packRaw } from '../../core/vision/raw-store';
-import { phraseFromFilename } from '../../core/vision/filename-phrase';
+import { oneWordProblem, phraseFromFilename } from '../../core/vision/filename-phrase';
 import { collapseRepeats, splitRepetitions, sparkline, type Pause, type Repetition } from '../../core/vision/repetitions';
 import { processVideoFile, type FrameFeatures } from '../../core/vision/video-processor';
 import { transcribeVideoAudio } from '../../core/vision/transcriber';
@@ -227,7 +227,7 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
 
   const saveLabel = () => {
     const n = totalKept();
-    return n ? `Guardar ${n} ejemplo${n === 1 ? '' : 's'}` : 'Escribe la frase para guardar';
+    return n ? `Guardar ${n} ejemplo${n === 1 ? '' : 's'}` : 'Escribe la palabra para guardar';
   };
 
   const renderGroup = (g: Group) => {
@@ -238,9 +238,10 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
         <header class="dev-import__head">
           <p class="dev-meta">${esc(g.source)}${g.lipsOnly ? ' · solo labios' : ''}</p>
           <label class="field">
-            <span class="field__label">Frase que dices en este video</span>
-            <input class="input" type="text" value="${esc(g.phrase)}" placeholder="Escribe la frase" data-phrase>
+            <span class="field__label">Palabra que dices en este video</span>
+            <input class="input" type="text" value="${esc(g.phrase)}" placeholder="Escribe una sola palabra" data-phrase>
           </label>
+          <p class="dev-warn" data-one-word ${oneWordProblem(g.phrase) ? '' : 'hidden'}>${esc(oneWordProblem(g.phrase) ?? '')}</p>
           <div class="dev-import__row">
             <p class="dev-import__count"><b>${g.reps.length}</b> ${g.reps.length === 1 ? 'repetición encontrada' : 'repeticiones encontradas'}${suspects ? ` · <span class="dev-warn">${suspects} dudosa${suspects === 1 ? '' : 's'}</span>` : ''}</p>
             <label class="dev-import__pause">
@@ -290,6 +291,12 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
     if (!input) return;
     const g = groupOf(input);
     if (g) g.phrase = input.value;
+    const warn = input.closest<HTMLElement>('[data-g]')?.querySelector<HTMLElement>('[data-one-word]');
+    if (warn) {
+      const msg = oneWordProblem(input.value);
+      warn.hidden = !msg;
+      warn.textContent = msg ?? '';
+    }
     q<HTMLElement>('#imp-save-label').textContent = saveLabel();
   });
 
@@ -316,7 +323,9 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
 
   const save = async () => {
     const ready = groups.filter((g) => g.phrase.trim() && g.reps.some((r) => r.keep));
-    if (!ready.length) return void toast('Escribe la frase de cada video.', { tone: 'warn' });
+    if (!ready.length) return void toast('Escribe la palabra de cada video.', { tone: 'warn' });
+    const many = ready.find((g) => oneWordProblem(g.phrase));
+    if (many) return void toast(oneWordProblem(many.phrase)!, { tone: 'warn' });
     const btn = q<HTMLButtonElement>('#imp-save');
     let folderName = folderSel.value;
     if (folderName === NEW_FOLDER) {
