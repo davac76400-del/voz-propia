@@ -3,7 +3,7 @@ import { dtw } from '../../core/learn/dtw';
 import type { LipSequence } from '../../core/types';
 import { FEATURE_DIMS } from '../../core/vision/lip-features';
 import { packRaw } from '../../core/vision/raw-store';
-import { oneWordProblem, phraseFromFilename } from '../../core/vision/filename-phrase';
+import { nameKey, oneWordProblem, phraseFromFilename } from '../../core/vision/filename-phrase';
 import { checkPatterns, REASON_TEXT, stallRatio, type PatternReport, type Reason } from '../../core/vision/pattern-check';
 import { splitRepetitions, sparkline, type Pause, type Repetition } from '../../core/vision/repetitions';
 import { processVideoFile, type FrameFeatures } from '../../core/vision/video-processor';
@@ -173,6 +173,7 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
 
       <div class="dev-help">
         <p><b>Nombre del archivo:</b> <code>voz-palabra.mp4</code> o <code>palabra-voz.mp4</code>. Ejemplo: <code>voz-me.mp4</code> guarda «Me». Una sola palabra por video.</p>
+        <p><b>Varios videos de la misma palabra:</b> ponles un número y todos cuentan como la misma: <code>voz-piel.mp4</code>, <code>voz-piel2.mp4</code> y <code>piel3-voz.mp4</code> son «Piel». Se llaman como el primero que subiste.</p>
         <p><b>Solo cuentan los labios:</b> el audio no se usa, así que no importa si sale tarde o se desfasa.</p>
         <p><b>Repetir ayuda:</b> di la palabra muchas veces en el mismo video, con una pausa corta entre cada una. La app agrupa las repeticiones que se ven iguales y usa solo los patrones que se repiten varias veces; descarta las raras, las que salen muy pocas veces y las del video trabado.</p>
         <p><b>Qué debe verse:</b> ${esc(FRAMING_TIP)} Con solo labios la lectura es experimental: la cara completa da mejores resultados.</p>
@@ -259,11 +260,15 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
     groups = [];
     failures = [];
     note = '';
+    // Los videos que son la misma palabra (cabeza-voz, cabeza2-voz…) se llaman como el primero que se subió.
+    const firstName = new Map<string, string>();
 
     for (const [i, file] of files.entries()) {
       const label = files.length > 1 ? `Video ${i + 1} de ${files.length}` : 'Video';
       try {
-        groups.push(await processOne(file, label));
+        const g = await processOne(file, label);
+        if (g.phrase) g.phrase = firstName.get(nameKey(g.phrase)) ?? (firstName.set(nameKey(g.phrase), g.phrase), g.phrase);
+        groups.push(g);
       } catch (err) {
         failures.push(`${file.name}: ${(err as Error).message}`);
       }

@@ -50,9 +50,11 @@ const MAX_FOR_CURATION = 220;
  */
 export async function publishPhrase(text: string): Promise<PublishSummary | null> {
   const key = keyOf(text);
-  const names = await supabase.from('programmer_videos').select('text').limit(20000);
+  // Más antiguo primero: la palabra se llama como el primer archivo que se subió.
+  const names = await supabase.from('programmer_videos').select('text').order('created_at', { ascending: true }).limit(20000);
   if (names.error) throw new Error(names.error.message);
   const same = [...new Set((names.data ?? []).map((r) => r.text as string).filter((t) => keyOf(t) === key))];
+  const name = same[0]?.trim() || text.trim();
   const found = same.length
     ? await supabase.from('programmer_videos').select('lip_points,folder,source_name').in('text', same)
     : { data: [], error: null };
@@ -88,9 +90,9 @@ export async function publishPhrase(text: string): Promise<PublishSummary | null
 
   const { error: up } = await supabase
     .from('shared_phrases')
-    .upsert({ text_key: key, text: text.trim(), folder, samples: chosen, updated_at: new Date().toISOString() }, { onConflict: 'text_key' });
+    .upsert({ text_key: key, text: name, folder, samples: chosen, updated_at: new Date().toISOString() }, { onConflict: 'text_key' });
   if (up) throw new Error(up.message);
-  return { text: text.trim(), clips: all.length, recordings: new Set(sources).size, kept: chosen.length, patterns };
+  return { text: name, clips: all.length, recordings: new Set(sources).size, kept: chosen.length, patterns };
 }
 
 let running: Promise<void> | null = null;
