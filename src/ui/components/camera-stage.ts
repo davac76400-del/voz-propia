@@ -100,7 +100,7 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
     <div class="stage__pill" data-state="sin-camara"><span class="dot"></span><span class="stage__pill-text">${MSG['sin-camara']}</span></div>
     <div class="stage__rec" aria-hidden="true"><span></span>Leyendo labios</div>
     <button class="stage__switch" type="button" hidden aria-label="Cambiar de cámara">${icon('switch-camera', 20)}</button>
-    <button class="stage__tech" type="button" hidden aria-pressed="false" title="Vista técnica: puntos de medición">${icon('cpu', 18)}<span>Puntos</span></button>
+    <button class="stage__tech" type="button" hidden aria-pressed="false" title="Mostrar u ocultar los puntos que mide el sistema">${icon('cpu', 18)}<span>Puntos</span></button>
   `;
   const video = el.querySelector('video')!;
   const canvas = el.querySelector('canvas')!;
@@ -117,13 +117,12 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
   let face: FaceState = 'sin-camara';
   let status: TrackerStatus = 'apagado';
   let level = 0;
-  // Los puntos de medición son del programador: el usuario y quien mira la demo solo ven la raya.
-  const isPro = () => state.settings.role === 'programador';
-  let showPoints = false;
+  // La raya neón y los puntos que mide el sistema se ven para todos; los puntos se pueden apagar con el botón.
+  let showPoints = true;
   try {
-    showPoints = localStorage.getItem('voz-propia:ver-puntos') === '1';
+    showPoints = localStorage.getItem('voz-propia:ver-puntos') !== '0';
   } catch {
-    /* sin almacenamiento: se queda apagado */
+    /* sin almacenamiento: se queda encendido */
   }
   let box = { x: 0, y: 0, w: 0, h: 0, ok: false };
   let missSince = 0;
@@ -167,7 +166,6 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
 
   /**
    * Raya fosforescente que rodea los labios. Es solo dibujo: se hace después de medir y no toca el sistema.
-   * No muestra puntos ni la malla de medición.
    */
   const neonLine = (lm: NormalizedLandmark[], map: ReturnType<typeof mapper>) => {
     const pts = LIP_OUTER.map((i) => map(lm[i]));
@@ -214,16 +212,19 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
     ctx.restore();
   };
 
-  /** Vista técnica (solo programador): los puntos que mide el sistema. */
+  /** Los puntos que mide el sistema, con el mismo brillo de la raya. */
   const drawPoints = (lm: NormalizedLandmark[], map: ReturnType<typeof mapper>) => {
     ctx.save();
-    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = NEON;
+    ctx.shadowBlur = 6;
+    ctx.fillStyle = NEON_CORE;
     for (const i of [...LIP_OUTER, ...LIP_INNER]) {
       const [x, y] = map(lm[i]);
       ctx.beginPath();
-      ctx.arc(x, y, 1.9, 0, Math.PI * 2);
+      ctx.arc(x, y, 2.1, 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.shadowBlur = 0;
     ctx.fillStyle = glow;
     for (const i of MOUTH_AROUND) {
       const [x, y] = map(lm[i]);
@@ -282,13 +283,13 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
     };
 
     neonLine(lm, map);
-    if (isPro() && showPoints) drawPoints(lm, map);
+    if (showPoints) drawPoints(lm, map);
   };
 
   const start = () => tracker.start(video, state.settings.cameraId);
 
   const syncTech = () => {
-    techBtn.hidden = !isPro() || status !== 'listo';
+    techBtn.hidden = status !== 'listo';
     techBtn.setAttribute('aria-pressed', String(showPoints));
   };
   techBtn.addEventListener('click', () => {

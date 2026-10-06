@@ -48,7 +48,7 @@ export function resample(x: Float32Array, T: number, D: number, L = TARGET_LEN):
 }
 
 /** Agrega la velocidad de cada rasgo: ayuda a distinguir frases con formas parecidas pero ritmo distinto. */
-export function withDeltas(x: Float32Array, L: number, D: number, weight = 0.8): Float32Array {
+export function withDeltas(x: Float32Array, L: number, D: number, weight = 1.2): Float32Array {
   const out = new Float32Array(L * D * 2);
   for (let t = 0; t < L; t++) {
     const prev = Math.max(0, t - 1);

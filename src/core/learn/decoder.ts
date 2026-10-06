@@ -8,6 +8,8 @@ import { FewShotClassifier } from './classifier';
 /** Longitud fija con la que se comparan los pedazos de la toma (más corta que la de una palabra suelta: es más rápido). */
 const L = 16;
 const BAND = 4;
+/** Peso de las velocidades al partir una toma en palabras. */
+const DELTA_WEIGHT = 0.8;
 /** Los pedazos con menos movimiento que esto son silencio. */
 const MIN_ACTIVITY = 0.006;
 /** Cuánto cuesta meter una palabra de más: evita inventar palabras en el ruido. */
@@ -88,7 +90,7 @@ export class WordDecoder {
       const D = s.seq.dims;
       const T = s.seq.frames.length / D;
       const { fixed } = prepareFrames(s.seq.frames, D, { speaker: true, smooth: true, ampPower: AMP_POWER }, L);
-      raw.push({ phraseId: s.phraseId, x: withDeltas(fixed, L, D) });
+      raw.push({ phraseId: s.phraseId, x: withDeltas(fixed, L, D, DELTA_WEIGHT) });
       this.D2 = D * 2;
       const trimmed = trimStill(s.seq.frames, T, D);
       (secs.get(s.phraseId) ?? secs.set(s.phraseId, []).get(s.phraseId)!).push(trimmed.T / Math.max(s.seq.fps, 1));
@@ -225,7 +227,7 @@ export class WordDecoder {
       const frames = seq.frames.subarray(a * D, b * D);
       if (mouthActivity(frames, D) >= MIN_ACTIVITY) {
         const { fixed } = prepareFrames(frames, D, { speaker: true, smooth: true, ampPower: AMP_POWER }, L);
-        out = this.normalize(withDeltas(fixed, L, D));
+        out = this.normalize(withDeltas(fixed, L, D, DELTA_WEIGHT));
       }
       cache.set(key, out);
       return out;

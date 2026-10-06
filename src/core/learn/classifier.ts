@@ -65,6 +65,8 @@ export class FewShotClassifier {
   static floor = 0.3;
   /** Peso de los rasgos que mejor separan palabras (0 = todos iguales). */
   static fisher = 0.5;
+  /** Quita ejemplos que se parecen más a otra palabra que a las suyas (0 = apagado; margen). */
+  static pruneMargin = 1.4;
   private w: Float32Array | null = null;
   /** Cuántas comparaciones DTW hizo en la última lectura. */
   lastComparisons = 0;
@@ -169,8 +171,12 @@ export class FewShotClassifier {
     let scale = 1;
     if (intra.length) scale = Math.max(median(intra), 1e-3);
     else if (inter.length) scale = Math.max(median(inter) * 0.4, 1e-3);
-    this.dropLookAlikes(bestSame, bestOther, otherIdx);
-    this.dropDoubtful(bestSame, scale);
+    // Todos marcan sobre la lista original y se quita una sola vez al final (los índices no se mueven).
+    const drop = new Set<Prepared>();
+    this.dropLookAlikes(bestSame, bestOther, otherIdx, drop);
+    this.pruneByMargin(bestSame, bestOther, drop);
+    this.dropDoubtful(bestSame, scale, drop);
+    if (drop.size) this.items = this.items.filter((it) => !drop.has(it));
     return scale;
   }
 
@@ -235,10 +241,9 @@ export class FewShotClassifier {
    * ejemplos (entre una de 5 y otra de 3 parecidas, se van los de la de 3) o si el parecido tiene mejor respaldo
    * (el ejemplo vecino se ve muy parecido a los de su propia palabra y este no).
    */
-  private dropLookAlikes(bestSame: number[], bestOther: number[], otherIdx: number[]) {
+  private dropLookAlikes(bestSame: number[], bestOther: number[], otherIdx: number[], drop: Set<Prepared>) {
     const count = new Map<string, number>();
     for (const it of this.items) count.set(it.phraseId, (count.get(it.phraseId) ?? 0) + 1);
-    const drop = new Set<Prepared>();
     const lost = new Map<string, number>();
     this.items.forEach((it, i) => {
       const j = otherIdx[i];
@@ -255,18 +260,35 @@ export class FewShotClassifier {
       drop.add(it);
       this.doubtful.push({ id: it.id, phraseId: it.phraseId, ratio: bestSame[i] / Math.max(bestOther[i], 1e-6) });
     });
-    if (drop.size) this.items = this.items.filter((it) => !drop.has(it));
   }
 
-  private dropDoubtful(nearestSame: number[], scale: number) {
+  /** Ejemplos que quedan más cerca de otra palabra que de las suyas por un margen: casi seguro están mal etiquetados. */
+  private pruneByMargin(bestSame: number[], bestOther: number[], drop: Set<Prepared>) {
+    const m = FewShotClassifier.pruneMargin;
+    if (!m) return;
+    const count = new Map<string, number>();
+    for (const it of this.items) count.set(it.phraseId, (count.get(it.phraseId) ?? 0) + 1);
+    const lost = new Map<string, number>();
+    const order = this.items.map((_, i) => i).filter((i) => Number.isFinite(bestSame[i]) && bestOther[i] * m < bestSame[i]).sort((a, b) => bestSame[b] / bestOther[b] - bestSame[a] / bestOther[a]);
+    for (const i of order) {
+      const it = this.items[i];
+      const total = count.get(it.phraseId) ?? 0;
+      const gone = lost.get(it.phraseId) ?? 0;
+      if (total < 4 || gone + 1 > Math.floor(total / 3) || total - gone - 1 < 3) continue;
+      lost.set(it.phraseId, gone + 1);
+      drop.add(it);
+      this.doubtful.push({ id: it.id, phraseId: it.phraseId, ratio: bestSame[i] / Math.max(bestOther[i], 1e-6) });
+    }
+  }
+
+  private dropDoubtful(nearestSame: number[], scale: number, drop: Set<Prepared>) {
     const byPhrase = new Map<string, number[]>();
     this.items.forEach((it, i) => {
-      if (!Number.isFinite(nearestSame[i])) return;
+      if (!Number.isFinite(nearestSame[i]) || drop.has(it)) return;
       const list = byPhrase.get(it.phraseId);
       if (list) list.push(i);
       else byPhrase.set(it.phraseId, [i]);
     });
-    const drop = new Set<Prepared>();
     for (const [phraseId, idx] of byPhrase) {
       if (idx.length < MIN_FOR_DOUBT) continue;
       const sorted = idx.map((i) => nearestSame[i]).sort((a, b) => a - b);
@@ -283,7 +305,6 @@ export class FewShotClassifier {
         this.doubtful.push({ id: this.items[f.i].id, phraseId, ratio: f.ratio });
       }
     }
-    if (drop.size) this.items = this.items.filter((it) => !drop.has(it));
   }
 
   /** Qué frase elegiría cada ejemplo si no existiera él mismo. Sirve para medir la precisión con tus propios datos. */

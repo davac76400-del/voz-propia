@@ -13,12 +13,16 @@ export interface EmbedOptions {
   ampPower?: number;
 }
 
+/** Suavizado binomial de 5 puntos: quita el temblor del detector sin borrar los gestos finos. */
+const KERNEL = [1 / 16, 4 / 16, 6 / 16, 4 / 16, 1 / 16];
 const smoothSeq = (x: Float32Array, T: number, D: number) => {
   const y = new Float32Array(x.length);
   for (let t = 0; t < T; t++) {
-    const a = Math.max(0, t - 1) * D;
-    const c = Math.min(T - 1, t + 1) * D;
-    for (let d = 0; d < D; d++) y[t * D + d] = 0.25 * x[a + d] + 0.5 * x[t * D + d] + 0.25 * x[c + d];
+    for (let d = 0; d < D; d++) {
+      let s = 0;
+      for (let j = 0; j < 5; j++) s += KERNEL[j] * x[Math.min(T - 1, Math.max(0, t + j - 2)) * D + d];
+      y[t * D + d] = s;
+    }
   }
   return y;
 };
