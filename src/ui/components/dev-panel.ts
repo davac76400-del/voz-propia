@@ -106,6 +106,9 @@ export function openDevPanel() {
   let failed = '';
   let creating = false;
   let menu: { key: string; mode: 'main' | 'merge' } | null = null;
+  /** Palabras con el detalle de videos y repeticiones abierto, y repeticiones marcadas para borrar. */
+  const opened = new Set<string>();
+  const marked = new Set<number>();
 
   const q = <T extends HTMLElement>(sel: string) => dlg.querySelector<T>(sel)!;
   const foldersEl = q<HTMLElement>('#dev-folders');
@@ -166,9 +169,48 @@ export function openDevPanel() {
       </div>`;
     }
     return `<div class="dev-menu" role="menu" data-menu-box>
+      <button class="dev-menu__item" role="menuitem" type="button" data-act="detail">${icon('play', 16)}<span>Ver videos y repeticiones</span></button>
       <button class="dev-menu__item" role="menuitem" type="button" data-act="merge">${icon('plus', 16)}<span>Fusionar con otra palabra…</span></button>
       ${it.merged.length ? `<button class="dev-menu__item" role="menuitem" type="button" data-act="unmerge">${icon('undo', 16)}<span>Desfusionar</span></button>` : ''}
       <button class="dev-menu__item dev-menu__item--danger" role="menuitem" type="button" data-act="delete">${icon('trash', 16)}<span>Eliminar</span></button>
+    </div>`;
+  };
+
+  const fmtT = (ms: number) => `${(Math.max(0, ms) / 1000).toFixed(1)} s`;
+
+  /** Videos de la palabra y, dentro de cada uno, sus repeticiones: se puede borrar todo, un video o repeticiones sueltas. */
+  const renderDetail = (it: Item) => {
+    const byVideo = new Map<string, DevClip[]>();
+    for (const c of it.clips) {
+      const name = c.source_name || 'Video sin nombre';
+      (byVideo.get(name) ?? byVideo.set(name, []).get(name)!).push(c);
+    }
+    const picked = it.clips.filter((c) => marked.has(c.id)).length;
+    return `<div class="dev-detail">
+      ${[...byVideo]
+        .map(
+          ([name, list]) => `
+        <section class="dev-video" data-video="${esc(name)}">
+          <header class="dev-video__head">
+            <span class="dev-video__name" title="${esc(name)}">${icon('play', 14)}<b>${esc(name)}</b></span>
+            <span class="dev-meta">${list.length === 1 ? '1 repetición' : `${list.length} repeticiones`}</span>
+            <button class="btn btn--ghost btn--sm dev-video__del" type="button" data-del-video="${esc(name)}">${icon('trash', 14)}<span>Borrar video</span></button>
+          </header>
+          <ul class="dev-reps">
+            ${[...list]
+              .sort((a, b) => a.start_time - b.start_time)
+              .map(
+                (c, k) => `<li><label class="dev-rep${marked.has(c.id) ? ' is-marked' : ''}"><input type="checkbox" data-rep="${c.id}"${marked.has(c.id) ? ' checked' : ''}><span>#${k + 1}</span><em>${fmtT(c.start_time)} · ${fmtT(c.end_time - c.start_time)}</em></label></li>`,
+              )
+              .join('')}
+          </ul>
+        </section>`,
+        )
+        .join('')}
+      <div class="dev-detail__foot">
+        <button class="btn btn--soft btn--sm" type="button" data-del-reps ${picked ? '' : 'disabled'}>${icon('trash', 16)}<span>Borrar ${picked ? `${picked} marcada${picked > 1 ? 's' : ''}` : 'repeticiones marcadas'}</span></button>
+        <button class="btn btn--ghost btn--sm" type="button" data-close-detail>Cerrar detalle</button>
+      </div>
     </div>`;
   };
 
@@ -202,7 +244,7 @@ export function openDevPanel() {
         <button class="dev-grip" type="button" data-grip aria-label="Arrastrar «${esc(it.text)}» para fusionarla con otra palabra">${icon('layout-grid', 18)}</button>
         <div class="dev-card__body">
           <h4 class="dev-card__title">${esc(it.text)}${it.merged.length ? `<span class="dev-badge">Fusionada con ${it.merged.map((m) => `«${esc(m)}»`).join(', ')}</span>` : ''}</h4>
-          <p class="dev-meta">${it.clips.length === 1 ? '1 ejemplo' : `${it.clips.length} ejemplos`} · ${it.sources.length === 1 ? '1 video' : `${it.sources.length} videos`}</p>
+          <p class="dev-meta">${it.clips.length === 1 ? '1 ejemplo' : `${it.clips.length} ejemplos`} · ${it.sources.length === 1 ? '1 video' : `${it.sources.length} videos`} · <button class="dev-link" type="button" data-open-detail>${opened.has(it.key) ? 'detalle abierto' : 'ver videos y repeticiones'}</button></p>
           <ul class="dev-chips">${it.sources.map((s) => `<li title="${esc(s.name)}">${icon('play', 12)}<span>${esc(s.name)}</span><b>${s.n}</b></li>`).join('')}</ul>
         </div>
         <select class="input dev-move" data-move aria-label="Carpeta de «${esc(it.text)}»">${folderOpts(it.folder)}</select>
@@ -210,6 +252,7 @@ export function openDevPanel() {
           <button class="icon-btn" type="button" data-menu aria-haspopup="menu" aria-expanded="${menu?.key === it.key}" aria-label="Más opciones de «${esc(it.text)}»">${icon('more', 20)}</button>
           ${renderMenu(it, everything)}
         </div>
+        ${opened.has(it.key) ? renderDetail(it) : ''}
       </article>`,
         )
         .join('');
@@ -354,6 +397,11 @@ export function openDevPanel() {
         menu.mode = 'merge';
         return renderMain();
       }
+      if (what === 'detail') {
+        opened.add(key);
+        menu = null;
+        return renderMain();
+      }
       if (what === 'unmerge') {
         const list = itemClips(key);
         const texts = textsOfClips(list);
@@ -369,6 +417,36 @@ export function openDevPanel() {
           void guard(() => deleteClips(ids), list.length === 1 ? 'Ejemplo eliminado.' : 'Palabra eliminada.', texts);
         });
       }
+    }
+    const chipsBtn = t.closest<HTMLElement>('[data-open-detail]');
+    if (chipsBtn) {
+      opened.add(keyFrom(chipsBtn));
+      return renderMain();
+    }
+    if (t.closest('[data-close-detail]')) {
+      const key = keyFrom(t);
+      opened.delete(key);
+      for (const c of clipsOf(key)) marked.delete(c.id);
+      return renderMain();
+    }
+    const delVideo = t.closest<HTMLElement>('[data-del-video]');
+    if (delVideo) {
+      const key = keyFrom(delVideo);
+      const name = delVideo.dataset.delVideo!;
+      const list = itemClips(key).filter((c) => (c.source_name || 'Video sin nombre') === name);
+      return arm(delVideo, '¿Seguro?', () => {
+        for (const c of list) marked.delete(c.id);
+        void guard(() => deleteClips(list.map((c) => c.id)), `Video «${name}» borrado (${list.length} repetición${list.length === 1 ? '' : 'es'}).`, textsOfClips(list));
+      });
+    }
+    const delReps = t.closest<HTMLElement>('[data-del-reps]');
+    if (delReps) {
+      const list = clipsOf(keyFrom(delReps)).filter((c) => marked.has(c.id));
+      if (!list.length) return;
+      return arm(delReps, '¿Seguro? Se borran', () => {
+        for (const c of list) marked.delete(c.id);
+        void guard(() => deleteClips(list.map((c) => c.id)), list.length === 1 ? 'Repetición borrada.' : `${list.length} repeticiones borradas.`, textsOfClips(list));
+      });
     }
     const into = t.closest<HTMLElement>('[data-merge-into]');
     if (into && menu) return void merge(menu.key, into.dataset.mergeInto!);
@@ -396,6 +474,13 @@ export function openDevPanel() {
   });
 
   dlg.addEventListener('change', (e) => {
+    const box = (e.target as HTMLElement).closest<HTMLInputElement>('[data-rep]');
+    if (box) {
+      const id = Number(box.dataset.rep);
+      if (box.checked) marked.add(id);
+      else marked.delete(id);
+      return renderMain();
+    }
     const sel = (e.target as HTMLElement).closest<HTMLSelectElement>('[data-move]');
     if (!sel) return;
     const list = itemClips(keyFrom(sel));

@@ -99,7 +99,7 @@ class Engine {
   async embed(seq: LipSequence): Promise<Embedded> {
     const D = seq.dims;
     // Se quita la forma media de la boca y la amplitud: otra persona u otra cámara se leen igual.
-    const { fixed } = prepareFrames(seq.frames, D, { speaker: true });
+    const { fixed } = prepareFrames(seq.frames, D, { speaker: true, smooth: true });
     if (this.neural) {
       const out = await this.neural.embed(fixed, TARGET_LEN, D);
       return { x: out.x, L: TARGET_LEN, D: out.D };

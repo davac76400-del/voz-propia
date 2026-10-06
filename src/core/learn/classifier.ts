@@ -19,6 +19,8 @@ interface Prepared {
 }
 
 /** Un ejemplo se deja fuera si su vecino más cercano de la misma frase está tantas veces más lejos que lo normal en esa frase. */
+/** Si la vecina de otra palabra está a menos de esta fracción de la distancia a la propia, es un parecido. */
+const LOOKALIKE_RATIO = 1;
 const DOUBTFUL_RATIO = 2;
 /** ...y además queda claramente más lejos que la variación típica de todas las frases. */
 const DOUBTFUL_GLOBAL = 1.3;
@@ -58,6 +60,8 @@ export class FewShotClassifier {
   private protos = new Map<string, Prepared[]>();
   /** Se pueden apagar para comparar velocidad y exactitud en pruebas. */
   static twoStage = true;
+  /** Piso de la escala por rasgo, en veces la escala media: más bajo = los movimientos chicos pesan más. */
+  static floor = 0.3;
   /** Cuántas comparaciones DTW hizo en la última lectura. */
   lastComparisons = 0;
 
@@ -106,7 +110,7 @@ export class FewShotClassifier {
       avgStd += sq[d];
     }
     avgStd = avgStd / D || 1;
-    for (let d = 0; d < D; d++) sq[d] = Math.max(sq[d], avgStd * 0.3);
+    for (let d = 0; d < D; d++) sq[d] = Math.max(sq[d], avgStd * FewShotClassifier.floor);
     this.mean = mean;
     this.std = sq;
 
@@ -130,6 +134,7 @@ export class FewShotClassifier {
     const n = this.items.length;
     const bestSame = new Array<number>(n).fill(Infinity);
     const bestOther = new Array<number>(n).fill(Infinity);
+    const otherIdx = new Array<number>(n).fill(-1);
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) {
         const d = dtw(this.items[i].x, this.items[j].x, this.L, this.D);
@@ -137,8 +142,14 @@ export class FewShotClassifier {
           if (d < bestSame[i]) bestSame[i] = d;
           if (d < bestSame[j]) bestSame[j] = d;
         } else {
-          if (d < bestOther[i]) bestOther[i] = d;
-          if (d < bestOther[j]) bestOther[j] = d;
+          if (d < bestOther[i]) {
+            bestOther[i] = d;
+            otherIdx[i] = j;
+          }
+          if (d < bestOther[j]) {
+            bestOther[j] = d;
+            otherIdx[j] = i;
+          }
         }
       }
     }
@@ -148,6 +159,7 @@ export class FewShotClassifier {
     let scale = 1;
     if (intra.length) scale = Math.max(median(intra), 1e-3);
     else if (inter.length) scale = Math.max(median(inter) * 0.4, 1e-3);
+    this.dropLookAlikes(bestSame, bestOther, otherIdx);
     this.dropDoubtful(bestSame, scale);
     return scale;
   }
@@ -202,6 +214,34 @@ export class FewShotClassifier {
       .map(([phraseId, ps]) => ({ phraseId, d: Math.min(...ps.map((p) => this.weighted(q, p))) }))
       .sort((a, b) => a.d - b.d);
     return first.map((f, i) => ({ phraseId: f.phraseId, distance: i < REFINE ? exact(this.byPhrase.get(f.phraseId)!) : f.d * FAR_INFLATE }));
+  }
+
+  /**
+   * Un ejemplo que se parece más a otra palabra que a las suyas es un colado. Se quita si esa otra palabra tiene MÁS
+   * ejemplos (entre una de 5 y otra de 3 parecidas, se van los de la de 3) o si el parecido tiene mejor respaldo
+   * (el ejemplo vecino se ve muy parecido a los de su propia palabra y este no).
+   */
+  private dropLookAlikes(bestSame: number[], bestOther: number[], otherIdx: number[]) {
+    const count = new Map<string, number>();
+    for (const it of this.items) count.set(it.phraseId, (count.get(it.phraseId) ?? 0) + 1);
+    const drop = new Set<Prepared>();
+    const lost = new Map<string, number>();
+    this.items.forEach((it, i) => {
+      const j = otherIdx[i];
+      if (j < 0 || !Number.isFinite(bestSame[i]) || bestOther[i] >= bestSame[i] * LOOKALIKE_RATIO) return;
+      const other = this.items[j];
+      const moreExamples = (count.get(other.phraseId) ?? 0) > (count.get(it.phraseId) ?? 0);
+      const betterBacked = Number.isFinite(bestSame[j]) && bestSame[j] < bestSame[i] * 0.7;
+      if (!moreExamples && !betterBacked) return;
+      // Nunca se quita más de la mitad de una palabra, ni se la deja con menos de 2.
+      const total = count.get(it.phraseId) ?? 0;
+      const gone = lost.get(it.phraseId) ?? 0;
+      if (gone + 1 > Math.floor(total / 2) || total - gone - 1 < 2) return;
+      lost.set(it.phraseId, gone + 1);
+      drop.add(it);
+      this.doubtful.push({ id: it.id, phraseId: it.phraseId, ratio: bestSame[i] / Math.max(bestOther[i], 1e-6) });
+    });
+    if (drop.size) this.items = this.items.filter((it) => !drop.has(it));
   }
 
   private dropDoubtful(nearestSame: number[], scale: number) {

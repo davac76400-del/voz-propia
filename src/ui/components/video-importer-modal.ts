@@ -179,9 +179,13 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
         <p><b>Qué debe verse:</b> ${esc(FRAMING_TIP)} Con solo labios la lectura es experimental: la cara completa da mejores resultados.</p>
       </div>
 
-      <div id="imp-progress" class="dev-progress" hidden>
-        <progress id="imp-bar" max="100"></progress>
-        <p id="imp-status" aria-live="polite">Preparando…</p>
+      <div id="imp-progress" class="imp-wait" hidden>
+        <div id="imp-game" class="minigame" aria-label="Minijuego mientras se analiza"></div>
+        <div class="dev-progress">
+          <progress id="imp-bar" max="100"></progress>
+          <p id="imp-status" aria-live="polite">Preparando…</p>
+          <p class="dev-meta">El análisis es profundo y puede tardar un par de minutos: así queda mejor.</p>
+        </div>
       </div>
 
       <p id="imp-err" class="dev-note dev-note--err" role="alert" hidden></p>
@@ -192,6 +196,8 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
   const fileInput = q<HTMLInputElement>('#imp-file');
   const pickBtn = q<HTMLButtonElement>('#imp-pick');
   const progress = q<HTMLDivElement>('#imp-progress');
+  const gameHost = q<HTMLDivElement>('#imp-game');
+  let stopGame: (() => void) | null = null;
   const status = q<HTMLParagraphElement>('#imp-status');
   const bar = q<HTMLProgressElement>('#imp-bar');
   const errBox = q<HTMLParagraphElement>('#imp-err');
@@ -255,6 +261,10 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
     if (!files.length) return;
     pickBtn.hidden = true;
     progress.hidden = false;
+    dlg.classList.add('is-waiting');
+    void import('./mini-game').then((m) => {
+      if (!progress.hidden && !stopGame) stopGame = m.startMiniGame(gameHost);
+    });
     result.hidden = true;
     errBox.hidden = true;
     groups = [];
@@ -275,6 +285,9 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
     }
 
     progress.hidden = true;
+    dlg.classList.remove('is-waiting');
+    stopGame?.();
+    stopGame = null;
     fileInput.value = '';
     pickBtn.hidden = false;
     if (failures.length) {

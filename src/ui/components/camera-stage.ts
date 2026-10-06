@@ -3,6 +3,7 @@ import { state, updateSettings } from '../../app/state';
 import { listCameras, tracker, type TrackerStatus, type TrackFrame } from '../../core/vision/face-tracker';
 import { LIP_INNER, LIP_OUTER, MOUTH_AROUND } from '../../core/vision/lip-features';
 import { icon } from '../icons';
+import { reducedMotion } from '../dom';
 
 export type FaceState = 'sin-camara' | 'buscando' | 'lejos' | 'listo';
 
@@ -26,6 +27,10 @@ const MSG: Record<FaceState, string> = {
 
 /** Distancia entre ojos (fracción del ancho visible) por debajo de la cual la cara está muy lejos. */
 const FAR = 0.07;
+
+/** Verde fosforescente de la raya y su centro casi blanco. */
+const NEON = '#3df2a0';
+const NEON_CORE = '#eafff6';
 
 interface Copy {
   title: string;
@@ -95,6 +100,7 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
     <div class="stage__pill" data-state="sin-camara"><span class="dot"></span><span class="stage__pill-text">${MSG['sin-camara']}</span></div>
     <div class="stage__rec" aria-hidden="true"><span></span>Leyendo labios</div>
     <button class="stage__switch" type="button" hidden aria-label="Cambiar de cámara">${icon('switch-camera', 20)}</button>
+    <button class="stage__tech" type="button" hidden aria-pressed="false" title="Vista técnica: puntos de medición">${icon('cpu', 18)}<span>Puntos</span></button>
   `;
   const video = el.querySelector('video')!;
   const canvas = el.querySelector('canvas')!;
@@ -104,12 +110,21 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
   const startBtn = el.querySelector<HTMLButtonElement>('.stage__start')!;
   const altBtn = el.querySelector<HTMLButtonElement>('.stage__alt')!;
   const switchBtn = el.querySelector<HTMLButtonElement>('.stage__switch')!;
+  const techBtn = el.querySelector<HTMLButtonElement>('.stage__tech')!;
   const title = el.querySelector<HTMLElement>('.stage__ph-title')!;
   const sub = el.querySelector<HTMLElement>('.stage__ph-sub')!;
 
   let face: FaceState = 'sin-camara';
   let status: TrackerStatus = 'apagado';
   let level = 0;
+  // Los puntos de medición son del programador: el usuario y quien mira la demo solo ven la raya.
+  const isPro = () => state.settings.role === 'programador';
+  let showPoints = false;
+  try {
+    showPoints = localStorage.getItem('voz-propia:ver-puntos') === '1';
+  } catch {
+    /* sin almacenamiento: se queda apagado */
+  }
   let box = { x: 0, y: 0, w: 0, h: 0, ok: false };
   let missSince = 0;
   let accent = '#7aa2ff';
@@ -150,14 +165,84 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
     return (p: NormalizedLandmark) => [p.x * vw * s + ox, p.y * vh * s + oy] as const;
   };
 
-  const path = (lm: NormalizedLandmark[], idx: number[], map: ReturnType<typeof mapper>) => {
-    ctx.beginPath();
-    idx.forEach((i, k) => {
+  /**
+   * Raya fosforescente que rodea los labios. Es solo dibujo: se hace después de medir y no toca el sistema.
+   * No muestra puntos ni la malla de medición.
+   */
+  const neonLine = (lm: NormalizedLandmark[], map: ReturnType<typeof mapper>) => {
+    const pts = LIP_OUTER.map((i) => map(lm[i]));
+    let cx = 0;
+    let cy = 0;
+    for (const [x, y] of pts) {
+      cx += x;
+      cy += y;
+    }
+    cx /= pts.length;
+    cy /= pts.length;
+    // Un poco más grande que la boca, para que flote alrededor y no la tape.
+    const o = pts.map(([x, y]) => [cx + (x - cx) * 1.1, cy + (y - cy) * 1.18] as const);
+    const n = o.length;
+    const mid = (a: readonly [number, number], b: readonly [number, number]) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] as const;
+    const trace = () => {
+      const start = mid(o[n - 1], o[0]);
+      ctx.beginPath();
+      ctx.moveTo(start[0], start[1]);
+      for (let i = 0; i < n; i++) {
+        const m = mid(o[i], o[(i + 1) % n]);
+        ctx.quadraticCurveTo(o[i][0], o[i][1], m[0], m[1]);
+      }
+      ctx.closePath();
+    };
+    const pulse = reducedMotion() ? 0 : Math.min(1, level * 1.6);
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.globalCompositeOperation = 'lighter';
+    for (const [width, blur, alpha, color] of [
+      [7 + pulse * 5, 26 + pulse * 14, 0.28, NEON] as const,
+      [3.6, 14 + pulse * 8, 0.75, NEON] as const,
+      [1.5, 4, 1, NEON_CORE] as const,
+    ]) {
+      ctx.shadowColor = NEON;
+      ctx.shadowBlur = blur;
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = alpha;
+      ctx.lineWidth = width;
+      trace();
+      ctx.stroke();
+    }
+    ctx.restore();
+  };
+
+  /** Vista técnica (solo programador): los puntos que mide el sistema. */
+  const drawPoints = (lm: NormalizedLandmark[], map: ReturnType<typeof mapper>) => {
+    ctx.save();
+    ctx.fillStyle = '#ffffff';
+    for (const i of [...LIP_OUTER, ...LIP_INNER]) {
       const [x, y] = map(lm[i]);
-      if (k) ctx.lineTo(x, y);
-      else ctx.moveTo(x, y);
-    });
-    ctx.closePath();
+      ctx.beginPath();
+      ctx.arc(x, y, 1.9, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = glow;
+    for (const i of MOUTH_AROUND) {
+      const [x, y] = map(lm[i]);
+      ctx.beginPath();
+      ctx.arc(x, y, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const { x, y, w, h } = box;
+    const c = Math.min(18, w * 0.18);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x, y + c); ctx.lineTo(x, y); ctx.lineTo(x + c, y);
+    ctx.moveTo(x + w - c, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + c);
+    ctx.moveTo(x + w, y + h - c); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - c, y + h);
+    ctx.moveTo(x + c, y + h); ctx.lineTo(x, y + h); ctx.lineTo(x, y + h - c);
+    ctx.stroke();
+    ctx.restore();
   };
 
   const draw = (f: TrackFrame) => {
@@ -196,52 +281,25 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
       ok: true,
     };
 
-    ctx.save();
-    ctx.lineJoin = 'round';
-    path(lm, LIP_OUTER, map);
-    ctx.fillStyle = fill;
-    ctx.fill();
-    ctx.shadowColor = glow;
-    ctx.shadowBlur = 14;
-    ctx.strokeStyle = accent;
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
-    path(lm, LIP_INNER, map);
-    ctx.lineWidth = 1.6;
-    ctx.strokeStyle = glow;
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#ffffff';
-    for (const i of [...LIP_OUTER, ...LIP_INNER]) {
-      const [x, y] = map(lm[i]);
-      ctx.beginPath();
-      ctx.arc(x, y, 1.9, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.fillStyle = glow;
-    for (const i of MOUTH_AROUND) {
-      const [x, y] = map(lm[i]);
-      ctx.beginPath();
-      ctx.arc(x, y, 1.6, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Retícula de enfoque con esquinas, sigue la boca con suavizado.
-    const { x, y, w, h } = box;
-    const c = Math.min(18, w * 0.18);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-    ctx.lineWidth = 2.5;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(x, y + c); ctx.lineTo(x, y); ctx.lineTo(x + c, y);
-    ctx.moveTo(x + w - c, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + c);
-    ctx.moveTo(x + w, y + h - c); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - c, y + h);
-    ctx.moveTo(x + c, y + h); ctx.lineTo(x, y + h); ctx.lineTo(x, y + h - c);
-    ctx.stroke();
-    ctx.restore();
+    neonLine(lm, map);
+    if (isPro() && showPoints) drawPoints(lm, map);
   };
 
   const start = () => tracker.start(video, state.settings.cameraId);
+
+  const syncTech = () => {
+    techBtn.hidden = !isPro() || status !== 'listo';
+    techBtn.setAttribute('aria-pressed', String(showPoints));
+  };
+  techBtn.addEventListener('click', () => {
+    showPoints = !showPoints;
+    try {
+      localStorage.setItem('voz-propia:ver-puntos', showPoints ? '1' : '0');
+    } catch {
+      /* se queda solo en esta sesión */
+    }
+    syncTech();
+  });
 
   const refreshSwitch = async () => {
     switchBtn.hidden = status !== 'listo' || (await listCameras()).length < 2;
@@ -262,6 +320,7 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
     if (s !== 'listo') setFace('sin-camara');
     else setFace('buscando');
     void refreshSwitch();
+    syncTech();
   };
 
   const offFrame = tracker.onFrame(draw);

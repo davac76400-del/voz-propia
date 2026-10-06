@@ -1379,3 +1379,25 @@ select.input {
   .topbar:has(.app-acct) .water-back { min-width: 0; padding: 0 14px 0 10px; }
   .topbar:has(.app-acct) .water-back__text small { font-size: 12px; }
 }
+
+/* Botón de la vista técnica (solo programador) */
+.stage__tech {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid rgb(255 255 255 / 0.35);
+  border-radius: var(--r-pill);
+  color: #fff;
+  background: rgb(8 12 24 / 0.55);
+  font: 700 var(--fs-sm) var(--font-display);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+}
+.stage__tech[hidden] { display: none; }
+.stage__tech[aria-pressed='true'] { background: rgb(61 242 160 / 0.28); border-color: #3df2a0; }

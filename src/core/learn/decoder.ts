@@ -84,7 +84,7 @@ export class WordDecoder {
     for (const s of samples) {
       const D = s.seq.dims;
       const T = s.seq.frames.length / D;
-      const { fixed } = prepareFrames(s.seq.frames, D, { speaker: true }, L);
+      const { fixed } = prepareFrames(s.seq.frames, D, { speaker: true, smooth: true }, L);
       raw.push({ phraseId: s.phraseId, x: withDeltas(fixed, L, D) });
       this.D2 = D * 2;
       const trimmed = trimStill(s.seq.frames, T, D);
@@ -217,7 +217,7 @@ export class WordDecoder {
       let out: Float32Array | null = null;
       const frames = seq.frames.subarray(a * D, b * D);
       if (mouthActivity(frames, D) >= MIN_ACTIVITY) {
-        const { fixed } = prepareFrames(frames, D, { speaker: true }, L);
+        const { fixed } = prepareFrames(frames, D, { speaker: true, smooth: true }, L);
         out = this.normalize(withDeltas(fixed, L, D));
       }
       cache.set(key, out);

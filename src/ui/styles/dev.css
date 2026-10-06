@@ -7,6 +7,13 @@
   .dev-sheet--wide {
     width: min(1120px, calc(100% - 64px));
   }
+  .dev-sheet.is-waiting {
+    width: min(820px, calc(100% - 64px));
+  }
+}
+
+.is-waiting .dev-help {
+  display: none;
 }
 
 .dev {
@@ -813,3 +820,132 @@
 .train__pair { padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--r-pill); font-size: var(--fs-sm); font-weight: 600; color: var(--ink); }
 .train__pair i { font-style: normal; opacity: 0.6; }
 .dash__live.is-idle i { animation: none; opacity: 0.5; }
+
+/* ---------- Detalle de una palabra: videos y repeticiones ---------- */
+.dev-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.dev-detail {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line-strong);
+}
+
+.dev-video {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-solid);
+}
+
+.dev-video__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.dev-video__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.dev-video__name b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dev-reps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dev-rep {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.dev-rep em {
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.dev-rep.is-marked {
+  border-color: var(--danger, #e5484d);
+  background: color-mix(in srgb, var(--danger, #e5484d) 14%, transparent);
+}
+
+.dev-detail__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---------- Espera del análisis: minijuego a la izquierda, avance a la derecha ---------- */
+.imp-wait {
+  display: grid;
+  gap: 16px;
+  align-items: center;
+  max-width: none;
+}
+
+@media (min-width: 720px) {
+  .imp-wait {
+    grid-template-columns: 300px minmax(0, 1fr);
+    gap: 24px;
+  }
+}
+
+.minigame {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+}
+
+.minigame__cv {
+  width: min(100%, 300px);
+  height: auto;
+  border: 1px solid rgba(61, 242, 160, 0.4);
+  border-radius: var(--r-lg);
+  box-shadow: 0 0 28px rgba(61, 242, 160, 0.18);
+  touch-action: none;
+  cursor: none;
+}
+
+.minigame__hint {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  text-align: center;
+}

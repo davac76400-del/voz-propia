@@ -33,7 +33,7 @@ export const inFrame = () => {
   }
 };
 
-const BASE: MediaTrackConstraints = { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } };
+const BASE: MediaTrackConstraints = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } };
 
 /** De lo más específico a lo más simple: las cámaras de escritorio rechazan a veces `facingMode`. */
 async function openCamera(deviceId: string | null): Promise<MediaStream> {
