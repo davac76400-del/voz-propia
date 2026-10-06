@@ -3,7 +3,7 @@ import { FewShotClassifier, type Embedded } from './learn/classifier';
 import { NeuralEncoder } from './learn/neural-encoder';
 import { AMP_POWER, mouthActivity, prepareFrames } from './learn/embed';
 import { TARGET_LEN, withDeltas } from './learn/sequence';
-import { sliceSequence, WordDecoder, type DecodedWord } from './learn/decoder';
+import { readTake, sliceSequence, WordDecoder, type DecodedWord } from './learn/decoder';
 import { bigramBonus } from './language/spanish';
 import { keyOf } from './language/key';
 import { learnedBonus, recordSentence, setSeeds, transitionCount } from './language/learned';
@@ -243,8 +243,8 @@ class Engine {
   }
 
   /**
-   * Lee una toma con una o varias palabras seguidas. Cada palabra trae sus alternativas y si es segura;
-   * las poco seguras quedan por confirmar en vez de escribirse.
+   * Lee una toma con una o varias palabras. Cada palabra trae sus alternativas y si es segura;
+   * las poco seguras se preguntan en vez de escribirse.
    */
   async decode(seq: LipSequence): Promise<(DecodedWord & { seq: LipSequence })[]> {
     if (this.decoderStale) {
@@ -252,9 +252,8 @@ class Engine {
       this.decoder.fit(this.samples.filter((s) => valid.has(s.phraseId)).map((s) => ({ phraseId: s.phraseId, seq: s.seq })));
       this.decoderStale = false;
     }
-    const words = await this.decoder.decode(seq, {
+    const words = await readTake(seq, this.classifier, this.decoder, (s) => this.embed(s), {
       limitFor: (id) => this.limitFor(id),
-      searchFactor: 1.35,
       bonus: (prev, id) => {
         const before = prev ? (this.phrase(prev)?.text ?? null) : null;
         const word = this.phrase(id)?.text ?? '';

@@ -313,23 +313,23 @@ export function usarView(root: HTMLElement) {
 
       // Varias palabras: se separa la toma en palabras y se arma la frase completa.
       setScreen('listening', `<p class="u-st"><span class="u-dots" aria-hidden="true"><i></i><i></i><i></i></span> Armando tu frase…</p>`);
-      const words = await engine.decode(seq);
-      const sent: SWord[] = [];
-      for (const w of words) {
-        const p = engine.phrase(w.phraseId);
-        if (p) sent.push(sword(p, false, [], w.seq));
-      }
-      if (!sent.length) {
-        renderMiss('No te entendí', 'Repítelo con calma, de frente y con buena luz. No escribo nada si no estoy seguro.');
+      const all = (await engine.decode(seq)).filter((w) => engine.phrase(w.phraseId));
+      // Solo se escribe lo seguro; lo dudoso se pregunta, nunca se escribe por adivinar.
+      const words = all.filter((w) => w.confident);
+      if (!words.length) {
+        const guess = all.length === 1 ? engine.phrase(all[0].phraseId) : null;
+        renderMiss(guess ? 'No estoy seguro' : 'No te entendí', 'Repítelo con calma, de frente y con buena luz. No escribo nada si no estoy seguro.', guess);
         return;
       }
-      renderSaid(sent, sent.length === 1 ? 'Palabra lista' : `Frase lista · ${sent.length} palabras`);
+      const sent = words.map((w) => sword(engine.phrase(w.phraseId)!, false, [], w.seq));
+      const doubtful = all.length - words.length;
+      renderSaid(sent, `${sent.length === 1 ? 'Palabra lista' : `Frase lista · ${sent.length} palabras`}${doubtful ? ` · ${doubtful} dudosa${doubtful > 1 ? 's' : ''} sin escribir` : ''}`);
       void speakSentence(sent);
       // Lo que se leyó con mucha seguridad enseña a la app cómo hablas tú.
       if (state.settings.learnFromUse) {
         const sure = new Map<string, LipSequence[]>();
         words.forEach((w, i) => {
-          if (w.confident && w.ratio <= LEARN_RATIO) (sure.get(sent[i].id) ?? sure.set(sent[i].id, []).get(sent[i].id)!).push(w.seq);
+          if (w.ratio <= LEARN_RATIO) (sure.get(sent[i].id) ?? sure.set(sent[i].id, []).get(sent[i].id)!).push(w.seq);
         });
         for (const [id, seqs] of sure) void engine.addSamples(id, seqs, 'correccion');
       }

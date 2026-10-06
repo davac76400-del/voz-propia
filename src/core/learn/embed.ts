@@ -2,7 +2,7 @@ import { LANDMARK_DIMS } from '../vision/lip-features';
 import { resample, TARGET_LEN, trimStill, withDeltas } from './sequence';
 
 /** Escala suave por la energía de la toma: la persona se adapta sin borrar cuánto abre la boca (que distingue palabras). */
-export const AMP_POWER = 0.25;
+export const AMP_POWER = 0.7;
 
 export interface EmbedOptions {
   /** Quita la forma media de la boca y la amplitud: dos personas o cámaras distintas se parecen más. */
@@ -15,7 +15,7 @@ export interface EmbedOptions {
 
 /** Suavizado binomial de 5 puntos: quita el temblor del detector sin borrar los gestos finos. */
 const KERNEL = [1 / 16, 4 / 16, 6 / 16, 4 / 16, 1 / 16];
-const smoothSeq = (x: Float32Array, T: number, D: number) => {
+export const smoothSeq = (x: Float32Array, T: number, D: number) => {
   const y = new Float32Array(x.length);
   for (let t = 0; t < T; t++) {
     for (let d = 0; d < D; d++) {

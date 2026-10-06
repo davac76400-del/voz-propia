@@ -68,6 +68,13 @@ export class FewShotClassifier {
   /** Quita ejemplos que se parecen más a otra palabra que a las suyas (0 = apagado; margen). */
   static pruneMargin = 1.4;
   private w: Float32Array | null = null;
+  /**
+   * Por palabra: cuánto se agranda o achica su distancia según qué tan cerca le quedan las otras palabras.
+   * Una palabra de forma genérica (que se parece un poco a todo) atraería las lecturas; así compite parejo.
+   */
+  private impostor = new Map<string, number>();
+  /** Se puede apagar para comparar en pruebas. */
+  static impostorNorm = true;
   /** Cuántas comparaciones DTW hizo en la última lectura. */
   lastComparisons = 0;
 
@@ -147,9 +154,11 @@ export class FewShotClassifier {
     const bestSame = new Array<number>(n).fill(Infinity);
     const bestOther = new Array<number>(n).fill(Infinity);
     const otherIdx = new Array<number>(n).fill(-1);
+    const all = new Float32Array(n * n);
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) {
         const d = this.dist(this.items[i].x, this.items[j].x);
+        all[i * n + j] = all[j * n + i] = d;
         if (this.items[i].phraseId === this.items[j].phraseId) {
           if (d < bestSame[i]) bestSame[i] = d;
           if (d < bestSame[j]) bestSame[j] = d;
@@ -176,8 +185,30 @@ export class FewShotClassifier {
     this.dropLookAlikes(bestSame, bestOther, otherIdx, drop);
     this.pruneByMargin(bestSame, bestOther, drop);
     this.dropDoubtful(bestSame, scale, drop);
+    this.impostor = FewShotClassifier.impostorNorm ? this.impostorFactors(all, n, drop) : new Map();
     if (drop.size) this.items = this.items.filter((it) => !drop.has(it));
     return scale;
+  }
+
+  /** Mediana de lo cerca que quedan los ejemplos de otras palabras de cada palabra (con la misma cuenta que al leer). */
+  private impostorFactors(all: Float32Array, n: number, drop: Set<Prepared>) {
+    const keep = this.items.map((it, i) => (drop.has(it) ? -1 : i)).filter((i) => i >= 0);
+    const by = new Map<string, number[]>();
+    for (const i of keep) (by.get(this.items[i].phraseId) ?? by.set(this.items[i].phraseId, []).get(this.items[i].phraseId)!).push(i);
+    const median = (a: number[]) => a.sort((x, y) => x - y)[Math.floor(a.length / 2)];
+    const raw = new Map<string, number>();
+    for (const [id, own] of by) {
+      const ds: number[] = [];
+      for (const i of keep) {
+        if (this.items[i].phraseId === id) continue;
+        const row = own.map((j) => all[i * n + j]).sort((a, b) => a - b);
+        ds.push(row.length >= 3 ? (row[0] + row[1]) / 2 : row[0]);
+      }
+      if (ds.length) raw.set(id, median(ds));
+    }
+    if (raw.size < 2) return new Map<string, number>();
+    const mid = median([...raw.values()]);
+    return new Map([...raw].map(([id, v]) => [id, mid / Math.max(v, 1e-6)]));
   }
 
   /** Agrupa los ejemplos por palabra y elige los representantes para la primera pasada. */
@@ -227,13 +258,14 @@ export class FewShotClassifier {
       const ds = list.map((it) => this.weighted(q, it)).sort((a, b) => a - b);
       return ds.length >= 3 ? (ds[0] + ds[1]) / 2 : ds[0];
     };
+    const k = (id: string) => this.impostor.get(id) ?? 1;
     if (!FewShotClassifier.twoStage || this.byPhrase.size <= TWO_STAGE_MIN_PHRASES) {
-      return [...this.byPhrase].map(([phraseId, list]) => ({ phraseId, distance: exact(list) }));
+      return [...this.byPhrase].map(([phraseId, list]) => ({ phraseId, distance: exact(list) * k(phraseId) }));
     }
     const first = [...this.protos]
-      .map(([phraseId, ps]) => ({ phraseId, d: Math.min(...ps.map((p) => this.weighted(q, p))) }))
+      .map(([phraseId, ps]) => ({ phraseId, d: Math.min(...ps.map((p) => this.weighted(q, p))) * k(phraseId) }))
       .sort((a, b) => a.d - b.d);
-    return first.map((f, i) => ({ phraseId: f.phraseId, distance: i < REFINE ? exact(this.byPhrase.get(f.phraseId)!) : f.d * FAR_INFLATE }));
+    return first.map((f, i) => ({ phraseId: f.phraseId, distance: i < REFINE ? exact(this.byPhrase.get(f.phraseId)!) * k(f.phraseId) : f.d * FAR_INFLATE }));
   }
 
   /**
