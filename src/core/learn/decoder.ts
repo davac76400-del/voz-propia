@@ -1,7 +1,9 @@
 import type { LipSequence } from '../types';
-import { mouthActivity, prepareFrames } from './embed';
+import { AMP_POWER, mouthActivity, prepareFrames } from './embed';
 import { dtw } from './dtw';
 import { trimStill, withDeltas } from './sequence';
+import { applyWeights, featureWeights } from './weights';
+import { FewShotClassifier } from './classifier';
 
 /** Longitud fija con la que se comparan los pedazos de la toma (más corta que la de una palabra suelta: es más rápido). */
 const L = 16;
@@ -64,6 +66,7 @@ export class WordDecoder {
   private std = new Float32Array(0);
   private D2 = 0;
   private scale = 1;
+  private w: Float32Array | null = null;
   /** Duración típica de cada palabra, en segundos. */
   private durations = new Map<string, number>();
   private reps = new Map<string, Template[]>();
@@ -84,7 +87,7 @@ export class WordDecoder {
     for (const s of samples) {
       const D = s.seq.dims;
       const T = s.seq.frames.length / D;
-      const { fixed } = prepareFrames(s.seq.frames, D, { speaker: true, smooth: true }, L);
+      const { fixed } = prepareFrames(s.seq.frames, D, { speaker: true, smooth: true, ampPower: AMP_POWER }, L);
       raw.push({ phraseId: s.phraseId, x: withDeltas(fixed, L, D) });
       this.D2 = D * 2;
       const trimmed = trimStill(s.seq.frames, T, D);
@@ -116,7 +119,11 @@ export class WordDecoder {
     for (let d = 0; d < D2; d++) sq[d] = Math.max(sq[d], avg * 0.3);
     this.mean = mean;
     this.std = sq;
+    this.w = null;
     this.templates = raw.map((t) => ({ phraseId: t.phraseId, x: this.normalize(t.x) }));
+    // Los rasgos que mejor separan palabras pesan más (igual que en la lectura de una palabra suelta).
+    this.w = featureWeights(this.templates, L, D2, FewShotClassifier.fisher);
+    if (this.w) for (const t of this.templates) t.x = applyWeights(this.w, t.x, D2);
     this.scale = this.estimateScale();
     this.buildReps();
   }
@@ -157,7 +164,7 @@ export class WordDecoder {
   private normalize(x: Float32Array) {
     const out = new Float32Array(x.length);
     for (let i = 0; i < x.length; i++) out[i] = (x[i] - this.mean[i % this.D2]) / this.std[i % this.D2];
-    return out;
+    return this.w ? applyWeights(this.w, out, this.D2) : out;
   }
 
   private estimateScale() {
@@ -217,7 +224,7 @@ export class WordDecoder {
       let out: Float32Array | null = null;
       const frames = seq.frames.subarray(a * D, b * D);
       if (mouthActivity(frames, D) >= MIN_ACTIVITY) {
-        const { fixed } = prepareFrames(frames, D, { speaker: true, smooth: true }, L);
+        const { fixed } = prepareFrames(frames, D, { speaker: true, smooth: true, ampPower: AMP_POWER }, L);
         out = this.normalize(withDeltas(fixed, L, D));
       }
       cache.set(key, out);

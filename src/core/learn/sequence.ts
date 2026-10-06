@@ -1,6 +1,6 @@
 /** Utilidades sobre secuencias T×D aplanadas en Float32Array. */
 
-export const TARGET_LEN = 32;
+export const TARGET_LEN = 24;
 const PAD = 3;
 
 function energy(x: Float32Array, T: number, D: number): Float32Array {

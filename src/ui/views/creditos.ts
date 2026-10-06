@@ -67,6 +67,7 @@ export function creditosView(root: HTMLElement) {
       <ul class="cr__list">
         <li><b>Al usarla:</b> no hay chatbot ni IA que escriba textos o genere imágenes. La lectura de labios usa los puntos de la cara que da el modelo de Google y los cálculos del equipo.</li>
         <li><b>Idea de investigación:</b> aprender palabras con pocos ejemplos está inspirado en LipLearner (Su, Fang y Rekimoto, CHI 2023).</li>
+        <li><b>Antecedente:</b> LipNet (Assael, Shillingford, Whiteson y de Freitas, 2016) demostró la lectura de labios de extremo a extremo con redes profundas entrenadas con un solo hablante y frases de gramática fija. Voz Propia no usa su código ni sus pesos: parte de otro enfoque (puntos de la cara, pocos ejemplos y adaptación a cada persona) y toma de LipNet solo la idea de medir el error por palabra y por letra.</li>
       </ul>
 
       <h2>Tus datos</h2>

@@ -949,3 +949,31 @@
   font-size: var(--fs-xs);
   text-align: center;
 }
+
+.dev-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.dev-metrics > div {
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.dev-metrics dt {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.dev-metrics dd {
+  margin: 2px 0 0;
+}
+
+.dev-metrics dd:nth-of-type(1) {
+  font: 700 var(--fs-xl, 1.6rem) / 1.1 var(--font-mono);
+}

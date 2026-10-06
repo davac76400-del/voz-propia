@@ -1,7 +1,7 @@
 import { FEATURE_DIMS } from './vision/lip-features';
 import { FewShotClassifier, type Embedded } from './learn/classifier';
 import { NeuralEncoder } from './learn/neural-encoder';
-import { mouthActivity, prepareFrames } from './learn/embed';
+import { AMP_POWER, mouthActivity, prepareFrames } from './learn/embed';
 import { TARGET_LEN, withDeltas } from './learn/sequence';
 import { sliceSequence, WordDecoder, type DecodedWord } from './learn/decoder';
 import { bigramBonus } from './language/spanish';
@@ -99,7 +99,7 @@ class Engine {
   async embed(seq: LipSequence): Promise<Embedded> {
     const D = seq.dims;
     // Se quita la forma media de la boca y la amplitud: otra persona u otra cámara se leen igual.
-    const { fixed } = prepareFrames(seq.frames, D, { speaker: true, smooth: true });
+    const { fixed } = prepareFrames(seq.frames, D, { speaker: true, smooth: true, ampPower: AMP_POWER });
     if (this.neural) {
       const out = await this.neural.embed(fixed, TARGET_LEN, D);
       return { x: out.x, L: TARGET_LEN, D: out.D };
@@ -348,6 +348,9 @@ class Engine {
     const perPhrase = new Map<string, { id: string; total: number; correct: number; confused: Map<string, number> }>();
     let total = 0;
     let correct = 0;
+    let top3 = 0;
+    let editSum = 0;
+    let charSum = 0;
     let done = 0;
     for (let i = 0; i < n; i += stride) {
       const r = this.classifier.leaveOneOut(i);
@@ -361,6 +364,10 @@ class Engine {
       const row = perPhrase.get(name) ?? perPhrase.set(name, { id: r.actual, total: 0, correct: 0, confused: new Map() }).get(name)!;
       row.total++;
       total++;
+      if (r.rank <= 3) top3++;
+      const a = charKey(textOf(r.actual));
+      charSum += a.length;
+      editSum += r.actual === r.predicted ? 0 : editDistance(a, charKey(textOf(r.predicted)));
       if (r.actual === r.predicted) {
         row.correct++;
         correct++;
@@ -377,7 +384,7 @@ class Engine {
       confused: [...v.confused].sort((a, b) => b[1] - a[1]).map(([t, c]) => ({ text: t, count: c })),
     }));
     rows.sort((a, b) => a.correct / a.total - b.correct / b.total);
-    return { total, correct, rows, phrasesWithTooFew: this.phrases.filter((p) => this.sampleCount(p.id) === 1).map((p) => p.text) };
+    return { total, correct, top3, cer: charSum ? editSum / charSum : 0, rows, phrasesWithTooFew: this.phrases.filter((p) => this.sampleCount(p.id) === 1).map((p) => p.text) };
   }
 
   async savePhrase(p: Omit<Phrase, 'id' | 'order' | 'createdAt'> & Partial<Phrase>) {
@@ -440,3 +447,21 @@ class Engine {
 }
 
 export const engine = new Engine();
+
+/** Texto sin mayúsculas, acentos ni espacios dobles: así «Sí» y «si» no cuentan como error. */
+const charKey = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
+/** Distancia de edición (Levenshtein): cuántas letras hay que cambiar para pasar de una palabra a otra. */
+function editDistance(a: string, b: string): number {
+  const prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let diag = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const up = prev[j];
+      prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diag = up;
+    }
+  }
+  return prev[b.length];
+}

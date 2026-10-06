@@ -1,11 +1,16 @@
 import { LANDMARK_DIMS } from '../vision/lip-features';
 import { resample, TARGET_LEN, trimStill, withDeltas } from './sequence';
 
+/** Escala suave por la energía de la toma: la persona se adapta sin borrar cuánto abre la boca (que distingue palabras). */
+export const AMP_POWER = 0.25;
+
 export interface EmbedOptions {
   /** Quita la forma media de la boca y la amplitud: dos personas o cámaras distintas se parecen más. */
   speaker?: boolean;
   /** Suaviza el temblor del seguimiento (cámaras web ruidosas). */
   smooth?: boolean;
+  /** Cuánto se escala por la energía de la toma: 1 = del todo, 0 = solo se quita la forma media. */
+  ampPower?: number;
 }
 
 const smoothSeq = (x: Float32Array, T: number, D: number) => {
@@ -23,7 +28,7 @@ const smoothSeq = (x: Float32Array, T: number, D: number) => {
  * y se escala por cuánto se mueve: queda solo la manera de moverse, que es lo que identifica la palabra.
  * Los puntos de la boca y los gestos se escalan por separado.
  */
-export function speakerNormalize(x: Float32Array, T: number, D: number, split = LANDMARK_DIMS): Float32Array {
+export function speakerNormalize(x: Float32Array, T: number, D: number, split = LANDMARK_DIMS, power = 1): Float32Array {
   const out = new Float32Array(x.length);
   const groups: [number, number][] = [[0, Math.min(split, D)]];
   if (split < D) groups.push([split, D]);
@@ -41,7 +46,7 @@ export function speakerNormalize(x: Float32Array, T: number, D: number, split = 
     }
     const rms = Math.sqrt(energy / (T * (b - a))) || 1;
     // El piso evita agrandar el ruido cuando casi no hay movimiento.
-    const k = 1 / Math.max(rms, 1e-3);
+    const k = 1 / Math.max(rms, 1e-3) ** power;
     for (let d = a; d < b; d++) for (let t = 0; t < T; t++) out[t * D + d] *= k;
   }
   return out;
@@ -54,7 +59,7 @@ export function prepareFrames(frames: Float32Array, D: number, opts: EmbedOption
   const trimmed = trimStill(x, T, D);
   x = trimmed.x;
   T = trimmed.T;
-  if (opts.speaker) x = speakerNormalize(x, T, D);
+  if (opts.speaker) x = speakerNormalize(x, T, D, LANDMARK_DIMS, opts.ampPower ?? 1);
   return { fixed: resample(x, T, D, len), L: len };
 }
 

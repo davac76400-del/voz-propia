@@ -44,6 +44,11 @@ export async function openPrecision() {
       <p class="dev-score__n">${pct}%</p>
       <p>${r.correct} de ${r.total} ejemplos se reconocieron bien, probando cada uno contra todos los demás.</p>
     </div>
+    <dl class="dev-metrics">
+      <div><dt>Error por palabra</dt><dd>${(100 - pct).toFixed(0)}%</dd><dd class="dev-meta">palabras mal leídas</dd></div>
+      <div><dt>Entre las 3 primeras</dt><dd>${Math.round((r.top3 / r.total) * 100)}%</dd><dd class="dev-meta">la correcta salió en el top 3</dd></div>
+      <div><dt>Error por letras</dt><dd>${(r.cer * 100).toFixed(1)}%</dd><dd class="dev-meta">qué tan lejos queda lo que lee</dd></div>
+    </dl>
     ${
       r.phrasesWithTooFew.length
         ? `<p class="dev-note">${icon('info', 16)}<span>Frases con un solo ejemplo (no se pueden medir): ${esc(r.phrasesWithTooFew.slice(0, 8).join(', '))}${r.phrasesWithTooFew.length > 8 ? '…' : ''}</span></p>`

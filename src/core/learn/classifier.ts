@@ -1,5 +1,6 @@
 import type { Candidate, Prediction } from '../types';
 import { dtw } from './dtw';
+import { applyWeights, featureWeights } from './weights';
 
 export interface Embedded {
   /** L×D aplanado, ya en el espacio del codificador. */
@@ -62,6 +63,9 @@ export class FewShotClassifier {
   static twoStage = true;
   /** Piso de la escala por rasgo, en veces la escala media: más bajo = los movimientos chicos pesan más. */
   static floor = 0.3;
+  /** Peso de los rasgos que mejor separan palabras (0 = todos iguales). */
+  static fisher = 0.5;
+  private w: Float32Array | null = null;
   /** Cuántas comparaciones DTW hizo en la última lectura. */
   lastComparisons = 0;
 
@@ -115,8 +119,14 @@ export class FewShotClassifier {
     this.std = sq;
 
     this.items = samples.map((s) => ({ id: s.id, phraseId: s.phraseId, x: this.normalize(s.emb.x) }));
+    this.w = featureWeights(this.items, this.L, this.D, FewShotClassifier.fisher);
+    if (this.w) for (const it of this.items) it.x = this.applyW(it.x);
     this.scale = this.estimateScale();
     this.buildIndex();
+  }
+
+  private applyW(x: Float32Array): Float32Array {
+    return applyWeights(this.w!, x, this.D);
   }
 
   private normalize(x: Float32Array): Float32Array {
@@ -137,7 +147,7 @@ export class FewShotClassifier {
     const otherIdx = new Array<number>(n).fill(-1);
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) {
-        const d = dtw(this.items[i].x, this.items[j].x, this.L, this.D);
+        const d = this.dist(this.items[i].x, this.items[j].x);
         if (this.items[i].phraseId === this.items[j].phraseId) {
           if (d < bestSame[i]) bestSame[i] = d;
           if (d < bestSame[j]) bestSame[j] = d;
@@ -175,7 +185,7 @@ export class FewShotClassifier {
         continue;
       }
       const d = list.map(() => new Array<number>(list.length).fill(0));
-      for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) d[i][j] = d[j][i] = dtw(list[i].x, list[j].x, this.L, this.D);
+      for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) d[i][j] = d[j][i] = this.dist(list[i].x, list[j].x);
       const central = d.map((row) => row.reduce((a, b) => a + b, 0)).reduce((best, v, i, arr) => (v < arr[best] ? i : best), 0);
       const picked = [central];
       while (picked.length < PROTOS) {
@@ -195,9 +205,13 @@ export class FewShotClassifier {
     }
   }
 
+  private dist(a: Float32Array, b: Float32Array) {
+    return dtw(a, b, this.L, this.D);
+  }
+
   private weighted(q: Float32Array, it: Prepared) {
     this.lastComparisons++;
-    return dtw(q, it.x, this.L, this.D);
+    return this.dist(q, it.x);
   }
 
   /** Distancia de la toma a cada palabra: primero contra sus representantes, y con todos sus ejemplos solo las más cercanas. */
@@ -273,29 +287,24 @@ export class FewShotClassifier {
   }
 
   /** Qué frase elegiría cada ejemplo si no existiera él mismo. Sirve para medir la precisión con tus propios datos. */
-  leaveOneOut(index: number): { actual: string; predicted: string } | null {
+  leaveOneOut(index: number): { actual: string; predicted: string; rank: number } | null {
     const me = this.items[index];
     const perPhrase = new Map<string, number[]>();
     for (let j = 0; j < this.items.length; j++) {
       if (j === index) continue;
       const it = this.items[j];
-      const d = dtw(me.x, it.x, this.L, this.D);
+      const d = this.dist(me.x, it.x);
       const list = perPhrase.get(it.phraseId);
       if (list) list.push(d);
       else perPhrase.set(it.phraseId, [d]);
     }
     if (!perPhrase.has(me.phraseId) || perPhrase.size < 2) return null;
-    let best = '';
-    let bestD = Infinity;
-    for (const [phraseId, ds] of perPhrase) {
+    const ranked = [...perPhrase].map(([phraseId, ds]) => {
       ds.sort((a, b) => a - b);
-      const distance = ds.length >= 3 ? (ds[0] + ds[1]) / 2 : ds[0];
-      if (distance < bestD) {
-        bestD = distance;
-        best = phraseId;
-      }
-    }
-    return { actual: me.phraseId, predicted: best };
+      return { phraseId, distance: ds.length >= 3 ? (ds[0] + ds[1]) / 2 : ds[0] };
+    });
+    ranked.sort((a, b) => a.distance - b.distance);
+    return { actual: me.phraseId, predicted: ranked[0].phraseId, rank: ranked.findIndex((r) => r.phraseId === me.phraseId) + 1 };
   }
 
   /**
@@ -304,7 +313,8 @@ export class FewShotClassifier {
    */
   closeness(emb: Embedded): { phraseId: string; ratio: number } | null {
     if (!this.items.length || emb.L !== this.L || emb.D !== this.D) return null;
-    const q = this.normalize(emb.x);
+    const q0 = this.normalize(emb.x);
+    const q = this.w ? this.applyW(q0) : q0;
     let best: { phraseId: string; distance: number } | null = null;
     for (const sc of this.scorePhrases(q)) if (!best || sc.distance < best.distance) best = sc;
     return best ? { phraseId: best.phraseId, ratio: best.distance / this.scale } : null;
@@ -314,7 +324,8 @@ export class FewShotClassifier {
     if (!this.items.length || emb.L !== this.L || emb.D !== this.D) {
       return { candidates: [], confidence: 0, ambiguous: true };
     }
-    const q = this.normalize(emb.x);
+    const q0 = this.normalize(emb.x);
+    const q = this.w ? this.applyW(q0) : q0;
     const scored = this.scorePhrases(q);
     scored.sort((a, b) => a.distance - b.distance);
 
