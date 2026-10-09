@@ -1,6 +1,6 @@
 {
   "name": "voz-propia",
-  "version": "0.26.0",
+  "version": "0.27.0",
   "private": true,
   "type": "module",
   "description": "Voz Propia: lectura de labios personal, sin internet, para quien perdió la voz.",

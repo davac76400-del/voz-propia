@@ -228,6 +228,10 @@ export function hablarView(root: HTMLElement) {
     try {
       const seq = await capture.result;
       lastSeq = seq;
+      if (!engine.hasSpeech(seq)) {
+        toast('No vi que movieras los labios. Dilo moviendo la boca, de frente a la cámara.', { tone: 'warn' });
+        return;
+      }
       const pred = await engine.recognize(seq, state.settings.autoSpeakThreshold);
       lastPred = pred;
       const top = pred.candidates[0] && engine.phrase(pred.candidates[0].phraseId);

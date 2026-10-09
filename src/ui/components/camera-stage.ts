@@ -4,6 +4,7 @@ import { listCameras, tracker, type TrackerStatus, type TrackFrame } from '../..
 import { LIP_INNER, LIP_OUTER, MOUTH_AROUND } from '../../core/vision/lip-features';
 import { icon } from '../icons';
 import { reducedMotion } from '../dom';
+import { OneEuro } from './one-euro';
 
 export type FaceState = 'sin-camara' | 'buscando' | 'lejos' | 'listo';
 
@@ -27,6 +28,12 @@ const MSG: Record<FaceState, string> = {
 
 /** Distancia entre ojos (fracción del ancho visible) por debajo de la cual la cara está muy lejos. */
 const FAR = 0.07;
+/** Margen para que el aviso «Acércate» no parpadee cuando la cara está justo en el borde. */
+const FAR_MARGIN = 0.1;
+
+/** Puntos que se dibujan: se suavizan para que la raya no tiemble (el sistema mide con los originales). */
+const DRAWN = [...LIP_OUTER, ...LIP_INNER, ...MOUTH_AROUND];
+const SLOT = new Map(DRAWN.map((id, k) => [id, k]));
 
 /** Verde fosforescente de la raya y su centro casi blanco. */
 const NEON = '#3df2a0';
@@ -139,7 +146,8 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
   };
 
   const resize = () => {
-    const dpr = Math.min(devicePixelRatio || 1, 2);
+    // La raya es suave: con más de 1.5 píxeles por punto solo se gasta la tarjeta gráfica sin que se note.
+    const dpr = Math.min(devicePixelRatio || 1, 1.5);
     const r = canvas.getBoundingClientRect();
     canvas.width = Math.round(r.width * dpr);
     canvas.height = Math.round(r.height * dpr);
@@ -164,11 +172,25 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
     return (p: NormalizedLandmark) => [p.x * vw * s + ox, p.y * vh * s + oy] as const;
   };
 
+  /** Un punto de la malla ya suavizado y en pantalla (coordenadas del canvas). */
+  const sm = new Float32Array(DRAWN.length * 2);
+  const fx = DRAWN.map(() => new OneEuro());
+  const fy = DRAWN.map(() => new OneEuro());
+  const at = (i: number): readonly [number, number] => {
+    const k = SLOT.get(i)! * 2;
+    return [sm[k], sm[k + 1]];
+  };
+  const resetSmoothing = () => {
+    for (const f of fx) f.reset();
+    for (const f of fy) f.reset();
+  };
+
   /**
    * Raya fosforescente que rodea los labios. Es solo dibujo: se hace después de medir y no toca el sistema.
+   * El brillo son trazos apilados (sin sombras difuminadas, que son muy caras de dibujar en cada cuadro).
    */
-  const neonLine = (lm: NormalizedLandmark[], map: ReturnType<typeof mapper>) => {
-    const pts = LIP_OUTER.map((i) => map(lm[i]));
+  const neonLine = () => {
+    const pts = LIP_OUTER.map(at);
     let cx = 0;
     let cy = 0;
     for (const [x, y] of pts) {
@@ -181,57 +203,54 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
     const o = pts.map(([x, y]) => [cx + (x - cx) * 1.1, cy + (y - cy) * 1.18] as const);
     const n = o.length;
     const mid = (a: readonly [number, number], b: readonly [number, number]) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] as const;
-    const trace = () => {
-      const start = mid(o[n - 1], o[0]);
-      ctx.beginPath();
-      ctx.moveTo(start[0], start[1]);
-      for (let i = 0; i < n; i++) {
-        const m = mid(o[i], o[(i + 1) % n]);
-        ctx.quadraticCurveTo(o[i][0], o[i][1], m[0], m[1]);
-      }
-      ctx.closePath();
-    };
+    const path = new Path2D();
+    const start = mid(o[n - 1], o[0]);
+    path.moveTo(start[0], start[1]);
+    for (let i = 0; i < n; i++) {
+      const m = mid(o[i], o[(i + 1) % n]);
+      path.quadraticCurveTo(o[i][0], o[i][1], m[0], m[1]);
+    }
+    path.closePath();
     const pulse = reducedMotion() ? 0 : Math.min(1, level * 1.6);
     ctx.save();
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.globalCompositeOperation = 'lighter';
-    for (const [width, blur, alpha, color] of [
-      [7 + pulse * 5, 26 + pulse * 14, 0.28, NEON] as const,
-      [3.6, 14 + pulse * 8, 0.75, NEON] as const,
-      [1.5, 4, 1, NEON_CORE] as const,
-    ]) {
-      ctx.shadowColor = NEON;
-      ctx.shadowBlur = blur;
+    for (const [width, alpha, color] of [
+      [20 + pulse * 8, 0.05, NEON],
+      [14 + pulse * 6, 0.08, NEON],
+      [9 + pulse * 4, 0.14, NEON],
+      [5.5, 0.4, NEON],
+      [3, 0.75, NEON],
+      [1.5, 1, NEON_CORE],
+    ] as const) {
       ctx.strokeStyle = color;
       ctx.globalAlpha = alpha;
       ctx.lineWidth = width;
-      trace();
-      ctx.stroke();
+      ctx.stroke(path);
     }
     ctx.restore();
   };
 
-  /** Los puntos que mide el sistema, con el mismo brillo de la raya. */
-  const drawPoints = (lm: NormalizedLandmark[], map: ReturnType<typeof mapper>) => {
+  /** Los puntos que mide el sistema, con el mismo color de la raya (un solo trazo por grupo). */
+  const drawPoints = () => {
     ctx.save();
-    ctx.shadowColor = NEON;
-    ctx.shadowBlur = 6;
     ctx.fillStyle = NEON_CORE;
+    ctx.beginPath();
     for (const i of [...LIP_OUTER, ...LIP_INNER]) {
-      const [x, y] = map(lm[i]);
-      ctx.beginPath();
+      const [x, y] = at(i);
+      ctx.moveTo(x + 2.1, y);
       ctx.arc(x, y, 2.1, 0, Math.PI * 2);
-      ctx.fill();
     }
-    ctx.shadowBlur = 0;
+    ctx.fill();
     ctx.fillStyle = glow;
+    ctx.beginPath();
     for (const i of MOUTH_AROUND) {
-      const [x, y] = map(lm[i]);
-      ctx.beginPath();
+      const [x, y] = at(i);
+      ctx.moveTo(x + 1.6, y);
       ctx.arc(x, y, 1.6, 0, Math.PI * 2);
-      ctx.fill();
     }
+    ctx.fill();
     const { x, y, w, h } = box;
     const c = Math.min(18, w * 0.18);
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
@@ -256,17 +275,26 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
       if (!missSince) missSince = f.t;
       if (f.t - missSince > 400) setFace('buscando');
       box.ok = false;
+      resetSmoothing();
       return;
     }
     missSince = 0;
     const map = mapper();
     const [lx, ly] = map(lm[33]);
     const [rx, ry] = map(lm[263]);
-    setFace(Math.hypot(rx - lx, ry - ly) / W < FAR ? 'lejos' : 'listo');
+    const eyes = Math.hypot(rx - lx, ry - ly) / W;
+    // Con un margen a cada lado: justo en el borde el aviso no parpadea entre «Acércate» y «Boca a la vista».
+    setFace(eyes < FAR * (face === 'lejos' ? 1 + FAR_MARGIN : 1 - FAR_MARGIN) ? 'lejos' : 'listo');
+
+    for (let k = 0; k < DRAWN.length; k++) {
+      const [x, y] = map(lm[DRAWN[k]]);
+      sm[2 * k] = fx[k].filter(x, f.t);
+      sm[2 * k + 1] = fy[k].filter(y, f.t);
+    }
 
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const i of LIP_OUTER) {
-      const [x, y] = map(lm[i]);
+      const [x, y] = at(i);
       minX = Math.min(minX, x); maxX = Math.max(maxX, x);
       minY = Math.min(minY, y); maxY = Math.max(maxY, y);
     }
@@ -282,8 +310,8 @@ export function createStage(onFace?: (s: FaceState) => void): Stage {
       ok: true,
     };
 
-    neonLine(lm, map);
-    if (showPoints) drawPoints(lm, map);
+    neonLine();
+    if (showPoints) drawPoints();
   };
 
   const start = () => tracker.start(video, state.settings.cameraId);

@@ -65,6 +65,11 @@
   }
 }
 
+/* Con la cámara encendida el fondo se queda quieto: así toda la tarjeta gráfica es para leer los labios. */
+.usar:has(.stage[data-status='listo']) .u-aurora i {
+  animation-play-state: paused;
+}
+
 /* ---------- Encabezado ---------- */
 
 .u-head {
@@ -201,8 +206,6 @@
     radial-gradient(70% 60% at 100% 0%, rgb(var(--t-a1-rgb) / 0.18), transparent 70%),
     linear-gradient(165deg, rgb(var(--t-card-rgb) / 0.92), rgb(var(--t-ink-rgb) / 0.88));
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 44px 90px -50px rgb(0 0 0 / 0.95);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
 }
 
 .u-row {

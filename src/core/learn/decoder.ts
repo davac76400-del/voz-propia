@@ -5,20 +5,15 @@ import { trimStill, withDeltas } from './sequence';
 import { applyWeights, featureWeights } from './weights';
 import { FewShotClassifier, type Embedded } from './classifier';
 import { LANDMARK_DIMS } from '../vision/lip-features';
+import { SPEECH_SNR, takeSnr } from '../vision/speech-detect';
 
 /** Longitud fija con la que se comparan los pedazos de la toma (más corta que la de una palabra suelta: es más rápido). */
 const L = 16;
 const BAND = 4;
 /** Peso de las velocidades al partir una toma en palabras. */
 const DELTA_WEIGHT = 0.8;
-/** Los pedazos con menos movimiento que esto son silencio. */
-const MIN_ACTIVITY = 0.006;
 /** Cuánto cuesta meter una palabra de más: evita inventar palabras en el ruido. */
 const WORD_COST = 0.35;
-/** Un pedazo que se mueve menos que esta fracción de lo que se mueve la palabra en sus ejemplos no es esa palabra (es tomar aire, acomodar la boca). */
-const MIN_REL_ACTIVITY = 0.5;
-/** Ni frente a la palabra más fuerte de la misma toma. */
-const MIN_PEAK_ACTIVITY = 0.4;
 /** El rival más cercano debe quedar al menos esto más lejos (proporción) para escribir la palabra sin preguntar. */
 const DOUBT_MARGIN = 1.08;
 /** Fracción del límite hasta donde una palabra se escribe sin preguntar; entre esto y el límite queda por confirmar. */
@@ -121,6 +116,14 @@ export class WordDecoder {
   private activity = new Map<string, number>();
   /** Se puede apagar para comparar velocidad y exactitud en pruebas. */
   static fast = true;
+  /**
+   * Puertas de movimiento. Que la toma tenga movimiento de labios (y no solo temblor) lo decide `takeSnr` antes de leer;
+   * aquí solo se descartan los pedazos que se mueven mucho menos que el resto de la toma (tomar aire, acomodar la boca).
+   * Son relativas y bajas a propósito: quien mueve poco los labios (o los redondea, como en «o» y «u») se mueve poco
+   * frente a los ejemplos, pero aun así es habla. Medido con grabaciones reales: con movimientos a un tercio del tamaño
+   * normal, leer bien pasó de 40 % a 50 %, y a un cuarto de 20 % a 36 %, sin que el temblor solo escribiera nada.
+   */
+  static gates = { minRel: 0.15, minPeak: 0.4, minStrength: 0.15 };
   /** Si toda la toma se parece a una sola palabra hasta aquí (en veces la variación normal), es una palabra y no se parte. */
   static oneWord = 1.9;
   /** Desde aquí hasta `oneWord` la toma también se prueba partida, por si son dos palabras cortas. */
@@ -331,7 +334,7 @@ export class WordDecoder {
     const phrases = [...this.durations.keys()];
 
     // Candidatos: cada palabra se prueba en pedazos con su duración típica, ±.
-    const cache = new Map<string, Float32Array | null>();
+    const cache = new Map<string, Float32Array>();
     const xs = smoothSeq(seq.frames, T, D);
     const floor = noiseFloor(xs, T, D);
     const acts = new Map<string, number>();
@@ -344,11 +347,8 @@ export class WordDecoder {
     const embedSeg = (a: number, b: number) => {
       const key = `${a}:${b}`;
       if (cache.has(key)) return cache.get(key)!;
-      let out: Float32Array | null = null;
-      if (mouthActivity(seq.frames.subarray(a * D, b * D), D) >= MIN_ACTIVITY) {
-        const { fixed } = prepareFrames(seq.frames.subarray(a * D, b * D), D, { speaker: true, smooth: true, ampPower: AMP_POWER }, L);
-        out = this.normalize(withDeltas(fixed, L, D, DELTA_WEIGHT));
-      }
+      const { fixed } = prepareFrames(seq.frames.subarray(a * D, b * D), D, { speaker: true, smooth: true, ampPower: AMP_POWER }, L);
+      const out = this.normalize(withDeltas(fixed, L, D, DELTA_WEIGHT));
       cache.set(key, out);
       return out;
     };
@@ -379,10 +379,8 @@ export class WordDecoder {
           const b = a + len;
           if (b > T) continue;
           const r0 = rel(a, b, w);
-          if (r0 < MIN_REL_ACTIVITY || r0 < peak[w] * MIN_PEAK_ACTIVITY) continue;
-          const q = embedSeg(a, b);
-          if (!q) continue;
-          const r = this.ratioFast(q, phrases[w], limit);
+          if (r0 < WordDecoder.gates.minRel || r0 < peak[w] * WordDecoder.gates.minPeak) continue;
+          const r = this.ratioFast(embedSeg(a, b), phrases[w], limit);
           if (r < limit) segs.push({ a, b, w, r, i: segs.length });
           if (++work % 40 === 0) await tick();
         }
@@ -445,7 +443,7 @@ export class WordDecoder {
     // Para cada palabra elegida, qué otras podrían ser en el mismo pedazo.
     const words: DecodedWord[] = [];
     for (const s of chosen) {
-      const q = embedSeg(s.a, s.b)!;
+      const q = embedSeg(s.a, s.b);
       const alts = phrases
         .map((id, i) => ({ phraseId: id, ratio: i === s.w ? s.r : this.ratio(q, id) }))
         .filter((x) => x.phraseId !== phrases[s.w])
@@ -460,8 +458,6 @@ export class WordDecoder {
 
 /** El segundo lugar debe quedar al menos esto más lejos para escribir una palabra suelta sin preguntar. */
 const ONE_MARGIN = 1.08;
-/** Lo mínimo que se debe mover la boca, comparado con cómo se mueve la palabra en sus ejemplos, para contarla. */
-const MIN_STRENGTH = 0.5;
 
 /**
  * Lee una toma completa. Primero pregunta si es UNA palabra (lo más común): si la toma entera se parece a una,
@@ -475,6 +471,8 @@ export async function readTake(
   embed: (s: LipSequence) => Promise<Embedded>,
   opts: DecodeOptions,
 ): Promise<DecodedWord[]> {
+  // Primero, ¿hubo movimiento de labios o solo temblor de la cámara? Se mide contra el ruido de la propia toma.
+  if (takeSnr(seq.frames, seq.dims) < SPEECH_SNR) return [];
   const span = decoder.speechSpan(seq);
   if (!span) return [];
   if (classifier.phraseCount >= 2) {
@@ -484,7 +482,7 @@ export async function readTake(
     if (near && near.ratio <= WordDecoder.oneWord) {
       const { candidates } = classifier.predict(e, 0.5, 4);
       const [top, second] = candidates;
-      if (decoder.strength(seq, span.start, span.end, top.phraseId) < MIN_STRENGTH) return [];
+      if (decoder.strength(seq, span.start, span.end, top.phraseId) < WordDecoder.gates.minStrength) return [];
       const ratioOf = (d: number) => (near.ratio * d) / Math.max(top.distance, 1e-6);
       const confident = near.ratio <= opts.limitFor(top.phraseId) * SURE && (!second || second.distance / top.distance >= ONE_MARGIN);
       const one: DecodedWord = {
@@ -505,5 +503,5 @@ export async function readTake(
 
 /** Las palabras de la toma partida, sin las que se movieron muy poco. */
 async function strongWords(seq: LipSequence, decoder: WordDecoder, opts: DecodeOptions) {
-  return (await decoder.decode(seq, opts)).filter((w) => decoder.strength(seq, w.start, w.end, w.phraseId) >= MIN_STRENGTH);
+  return (await decoder.decode(seq, opts)).filter((w) => decoder.strength(seq, w.start, w.end, w.phraseId) >= WordDecoder.gates.minStrength);
 }

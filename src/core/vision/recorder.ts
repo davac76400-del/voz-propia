@@ -1,6 +1,7 @@
 import type { LipSequence } from '../types';
 import { FEATURE_DIMS } from './lip-features';
 import { tracker } from './face-tracker';
+import { LipMotion } from './speech-detect';
 
 export interface CaptureOptions {
   maxMs: number;
@@ -25,9 +26,9 @@ export class CaptureError extends Error {
   }
 }
 
-const QUIET_MS = 650;
+/** Silencio de labios que termina la toma; el detector ya tarda unos 0.4 s en notar que se detuvieron. */
+const QUIET_MS = 450;
 const MIN_FRAMES = 8;
-const MOTION_THRESHOLD = 0.012;
 
 export function captureSequence(opts: CaptureOptions): Capture {
   let stop = () => {};
@@ -37,9 +38,10 @@ export function captureSequence(opts: CaptureOptions): Capture {
     const start = performance.now();
     let lastActive = start;
     let spoke = false;
-    let prevOpen = 0;
-    let motion = 0;
     let done = false;
+    // ¿Se mueven los labios? Se mide contra el ruido de la propia toma, no con un número fijo: sirve igual con movimientos
+    // grandes, chicos o redondos, y el temblor de la cámara no cuenta como habla.
+    const motion = new LipMotion(FEATURE_DIMS);
 
     const finish = (err?: CaptureError) => {
       if (done) return;
@@ -60,13 +62,13 @@ export function captureSequence(opts: CaptureOptions): Capture {
       const elapsed = f.t - start;
       if (f.features) {
         frames.push(f.features.slice());
-        // Se mide movimiento, no apertura: hay pacientes que descansan con la boca entreabierta.
-        motion = motion * 0.5 + Math.abs(f.openness - prevOpen) * 0.5;
-        if (frames.length > 1 && motion > MOTION_THRESHOLD) {
+        if (motion.push(f.features).moving) {
           lastActive = f.t;
           if (elapsed > 200) spoke = true;
         }
-        prevOpen = f.openness;
+      } else {
+        // Una cara que se pierde y vuelve no debe contar el salto como movimiento.
+        motion.reset();
       }
       opts.onProgress?.(elapsed, f.openness, !!f.features);
       if (opts.autoStop && spoke && f.t - lastActive > (opts.quietMs ?? QUIET_MS) && elapsed > 900) finish();

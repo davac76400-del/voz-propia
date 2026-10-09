@@ -19,8 +19,6 @@ const VERIFY_LIMIT = 2.8;
 const VERIFY_LIMIT_PERSONAL = 2.2;
 /** Con esta cercanía la lectura es tan segura que se aprende de ella. */
 const LEARN_RATIO = 1.7;
-/** Menos movimiento que esto es solo el temblor de la cámara. */
-const MIN_ACTIVITY = 0.008;
 const BARS = 28;
 
 type Screen = 'empty' | 'idle' | 'listening' | 'said' | 'miss' | 'pick';
@@ -279,7 +277,7 @@ export function usarView(root: HTMLElement) {
     const maxMs = multi ? Math.max(state.settings.maxCaptureMs, 8000) : state.settings.maxCaptureMs;
     capture = captureSequence({
       maxMs,
-      quietMs: multi ? 1500 : undefined,
+      quietMs: multi ? 1200 : undefined,
       autoStop: true,
       onProgress: (elapsed) => {
         ring.style.strokeDashoffset = String(RING * (1 - Math.min(1, elapsed / maxMs)));
@@ -291,7 +289,7 @@ export function usarView(root: HTMLElement) {
       const seq = await capture.result;
       lastSeq = seq;
       const list = trained();
-      if (engine.activity(seq) < MIN_ACTIVITY) {
+      if (!engine.hasSpeech(seq)) {
         renderMiss('No vi que movieras los labios', 'Dilo moviendo bien la boca, de frente a la cámara.');
         return;
       }

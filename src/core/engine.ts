@@ -2,8 +2,10 @@ import { FEATURE_DIMS } from './vision/lip-features';
 import { FewShotClassifier, type Embedded } from './learn/classifier';
 import { NeuralEncoder } from './learn/neural-encoder';
 import { AMP_POWER, mouthActivity, prepareFrames } from './learn/embed';
+import { SPEECH_SNR, takeSnr } from './vision/speech-detect';
 import { TARGET_LEN, withDeltas } from './learn/sequence';
 import { readTake, sliceSequence, WordDecoder, type DecodedWord } from './learn/decoder';
+import { fitInWorker } from './learn/fit-client';
 import { bigramBonus } from './language/spanish';
 import { keyOf } from './language/key';
 import { learnedBonus, recordSentence, setSeeds, transitionCount } from './language/learned';
@@ -15,6 +17,8 @@ import { DEFAULT_PHRASES, RETIRED_DEFAULTS } from '../data/default-phrases';
 type Listener = () => void;
 
 export const MAX_SAMPLES_PER_PHRASE = 12;
+/** Cuánto se espera para entrenar con lo que se aprendió de tu uso (se juntan varias lecturas en un solo entrenamiento). */
+const SOFT_RETRAIN_MS = 6000;
 const SHARED_PREFIX = 'shared:';
 /** Ejemplos con los que una frase se considera lista. */
 export const READY_SAMPLES = 3;
@@ -109,14 +113,56 @@ class Engine {
 
   private decoder = new WordDecoder();
   private decoderStale = true;
+  private fitting: Promise<void> | null = null;
+  private fitAgain = false;
+  private softTimer = 0;
 
-  private async retrain() {
+  /**
+   * Entrena otra vez con los ejemplos de ahora. Corre en otro hilo (tarda de 1 a 15 segundos): la cámara y la pantalla
+   * no se congelan, y mientras tanto se sigue leyendo con lo anterior. Si llegan más cambios, se entrena una vez más al final.
+   */
+  private retrain(): Promise<void> {
+    clearTimeout(this.softTimer);
+    if (this.fitting) {
+      this.fitAgain = true;
+      return this.fitting;
+    }
+    this.fitting = (async () => {
+      try {
+        do {
+          this.fitAgain = false;
+          await this.fitOnce();
+        } while (this.fitAgain);
+      } finally {
+        this.fitting = null;
+      }
+    })();
+    return this.fitting;
+  }
+
+  /** Lo que se aprende de tu uso no corre prisa: se junta y se entrena una sola vez, un rato después. */
+  private retrainSoon() {
+    clearTimeout(this.softTimer);
+    this.softTimer = window.setTimeout(() => void this.retrain(), SOFT_RETRAIN_MS);
+  }
+
+  private async fitOnce() {
     const valid = new Set(this.phrases.map((p) => p.id));
-    const embedded = await Promise.all(
-      this.samples.filter((s) => valid.has(s.phraseId)).map(async (s) => ({ id: s.id, phraseId: s.phraseId, emb: await this.embed(s.seq) })),
+    const kept = this.samples.filter((s) => valid.has(s.phraseId));
+    const embedded = await Promise.all(kept.map(async (s) => ({ id: s.id, phraseId: s.phraseId, emb: await this.embed(s.seq) })));
+    const fitted = await fitInWorker(
+      embedded,
+      kept.map((s) => ({ phraseId: s.phraseId, seq: s.seq })),
     );
-    this.classifier.fit(embedded);
-    this.decoderStale = true;
+    if (fitted) {
+      // El resultado son datos puros: se copian al modelo que está en uso, de un solo golpe.
+      Object.assign(this.classifier, fitted.classifier);
+      Object.assign(this.decoder, fitted.decoder);
+      this.decoderStale = false;
+    } else {
+      this.classifier.fit(embedded);
+      this.decoderStale = true;
+    }
     this.learnTransitions();
     this.emit();
     this.scheduleTraining();
@@ -263,9 +309,17 @@ class Engine {
     return words.map((w) => ({ ...w, seq: sliceSequence(seq, w.start, w.end) }));
   }
 
-  /** Cuánto se movieron los labios en la toma; 0 si se quedó quieta. */
+  /** Cuánto se movieron los labios en la toma (en distancias entre ojos); sirve para comparar tomas entre sí. */
   activity(seq: LipSequence): number {
     return mouthActivity(seq.frames, seq.dims);
+  }
+
+  /**
+   * ¿Los labios se movieron de verdad en la toma, o solo hay temblor de la cámara? Se mide contra el ruido de la
+   * propia toma, así que sirve igual con movimientos grandes, chicos o redondos (o, u) y con cualquier cámara.
+   */
+  hasSpeech(seq: LipSequence): boolean {
+    return takeSnr(seq.frames, seq.dims) >= SPEECH_SNR;
   }
 
   async recognize(seq: LipSequence, threshold: number): Promise<Prediction> {
@@ -286,7 +340,8 @@ class Engine {
       this.samples = this.samples.filter((x) => x.id !== old.id);
       await db.deleteSample(old.id);
     }
-    await this.retrain();
+    if (source === 'correccion') this.retrainSoon();
+    else await this.retrain();
   }
 
   /** Agrega varios ejemplos de una frase y entrena una sola vez. */
@@ -303,7 +358,8 @@ class Engine {
       this.samples = this.samples.filter((x) => x.id !== old.id);
       await db.deleteSample(old.id);
     }
-    await this.retrain();
+    if (source === 'correccion') this.retrainSoon();
+    else await this.retrain();
   }
 
   async clearSamples(phraseId: string) {

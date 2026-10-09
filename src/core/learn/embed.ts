@@ -1,8 +1,13 @@
 import { LANDMARK_DIMS } from '../vision/lip-features';
 import { resample, TARGET_LEN, trimStill, withDeltas } from './sequence';
 
-/** Escala suave por la energía de la toma: la persona se adapta sin borrar cuánto abre la boca (que distingue palabras). */
-export const AMP_POWER = 0.7;
+/**
+ * Escala por la energía de la toma: la persona se adapta sin borrar del todo cuánto abre la boca (que distingue palabras).
+ * Medido con grabaciones reales y movimientos a 1, 1/2, 1/3 y 1/4 del tamaño normal (quien mueve poco los labios, o los
+ * redondea): leer bien con 0.7 daba 63/57/50/36 % y con 0.85 da 65/61/59/51 %, y las palabras mal escritas con seguridad
+ * bajaron de 14 % a 6 % con movimientos normales. Con 1 (sin conservar nada de la amplitud) vuelve a empeorar.
+ */
+export const AMP_POWER = 0.85;
 
 export interface EmbedOptions {
   /** Quita la forma media de la boca y la amplitud: dos personas o cámaras distintas se parecen más. */
