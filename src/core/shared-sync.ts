@@ -3,7 +3,7 @@ import { engine, MAX_SAMPLES_PER_PHRASE } from './engine';
 import { keyOf } from './language/key';
 import { curateExamples } from './learn/curate';
 import { dtw } from './learn/dtw';
-import { allRows, dbError, supabase } from './supabase';
+import { allRows, dbError, requireProgramador, supabase } from './supabase';
 import type { LipSequence } from './types';
 
 
@@ -49,6 +49,8 @@ const MAX_FOR_CURATION = 220;
  * con los mejores ejemplos, repartidos entre las grabaciones, y los publica para que todos los dispositivos los usen.
  */
 export async function publishPhrase(text: string): Promise<PublishSummary | null> {
+  // Sin sesión de programador la base muestra «lista vacía»: eso no es «la palabra ya no tiene videos».
+  await requireProgramador();
   const key = keyOf(text);
   // Más antiguo primero: la palabra se llama como el primer archivo que se subió.
   const names = await allRows<{ text: string }>((a, b) =>
@@ -71,11 +73,14 @@ export async function publishPhrase(text: string): Promise<PublishSummary | null
   for (const r of all) counts.set(r.folder, (counts.get(r.folder) ?? 0) + 1);
   const folder = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'Sin carpeta';
 
-  if (!all.length) {
+  // La palabra solo se despublica cuando de verdad no le queda ningún video. Si hay videos pero ninguno se pudo leer,
+  // se avisa y la palabra publicada se queda como estaba (la versión anterior también queda en la memoria).
+  if (!found.length) {
     const del = await supabase.from('shared_phrases').delete().eq('text_key', key);
     if (del.error) throw dbError(del.error);
     return null;
   }
+  if (!all.length) throw new Error(`No se pudo leer ninguna grabación de «${name}». La palabra publicada se dejó como estaba.`);
 
   // Con demasiadas repeticiones se revisan, repartidas parejo, las que alcanzan para decidir.
   const step = Math.max(1, Math.ceil(all.length / MAX_FOR_CURATION));

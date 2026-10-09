@@ -7,7 +7,10 @@ import {
   listFolders,
   mergeClips,
   moveClips,
+  recoverClips,
   restoreClips,
+  SIN_PERMISO,
+  soyProgramador,
   unmergeClips,
   watchDevData,
   type DevClip,
@@ -15,7 +18,9 @@ import {
 import { esc } from '../dom';
 import { icon } from '../icons';
 import { publishPhrase, syncShared } from '../../core/shared-sync';
+import { openDevGate } from './dev-gate';
 import { openPrecision } from './dev-eval';
+import { openMemory } from './dev-memory';
 import { openVideoImporter } from './video-importer-modal';
 import { toast } from './toast';
 
@@ -89,6 +94,7 @@ export function openDevPanel() {
           <input class="input" id="dev-q" type="search" placeholder="Buscar una palabra o un video" autocomplete="off">
         </label>
         <button class="btn btn--soft" id="dev-eval" type="button">${icon('gauge', 18)}<span>Probar precisión</span></button>
+        <button class="btn btn--soft" id="dev-memory" type="button">${icon('shield-check', 18)}<span>Memoria</span></button>
         <button class="btn btn--primary" id="dev-import" type="button">${icon('upload', 18)}<span>Importar video</span></button>
       </div>
 
@@ -104,6 +110,8 @@ export function openDevPanel() {
   let query = '';
   let loaded = false;
   let failed = '';
+  /** La base muestra «vacío» cuando la sesión no es de programador: se avisa en vez de aparentar que se borró todo. */
+  let noSession = false;
   let creating = false;
   let menu: { key: string; mode: 'main' | 'merge' } | null = null;
   /** Palabras con el detalle de videos y repeticiones abierto, y repeticiones marcadas para borrar. */
@@ -119,6 +127,7 @@ export function openDevPanel() {
     try {
       [clips, folders] = await Promise.all([listClips(), listFolders()]);
       failed = '';
+      noSession = !clips.length && !(await soyProgramador().catch(() => false));
       liveEl.classList.remove('is-off');
     } catch (err) {
       failed = (err as Error).message;
@@ -223,6 +232,10 @@ export function openDevPanel() {
       mainEl.innerHTML = `<div class="dev-empty">${icon('wifi-off', 28)}<p>No se pudo conectar con la base de datos.</p><p class="dev-meta">${esc(failed)}</p><button class="btn btn--soft" data-retry type="button">Reintentar</button></div>`;
       return;
     }
+    if (noSession) {
+      mainEl.innerHTML = `<div class="dev-empty">${icon('lock', 28)}<p>Tus videos no se ven en esta sesión.</p><p class="dev-meta">${esc(SIN_PERMISO)}</p><button class="btn btn--primary" data-login type="button">${icon('log-in', 18)}<span>Entrar como programador</span></button></div>`;
+      return;
+    }
     const items = buildItems(clips, active, query.trim().toLowerCase());
     const everything = buildItems(clips, ALL, '');
     const title = active === ALL ? 'Todas las palabras' : active;
@@ -300,6 +313,37 @@ export function openDevPanel() {
 
   const textsOfClips = (list: DevClip[]) => list.flatMap((c) => [c.text, ...(c.orig_text ? [c.orig_text] : [])]);
 
+  /** Borrar nunca es para siempre: lo borrado queda en la memoria y «Deshacer» (o el botón Memoria) lo trae de vuelta. */
+  const removeClips = async (list: DevClip[], msg: string) => {
+    const ids = list.map((c) => c.id);
+    const texts = textsOfClips(list);
+    try {
+      await deleteClips(ids);
+      await publish(texts);
+      await load();
+      toast(`${msg} Sigue en la memoria.`, {
+        tone: 'ok',
+        ms: 12000,
+        action: {
+          label: 'Deshacer',
+          run: () =>
+            void (async () => {
+              try {
+                await recoverClips(ids);
+                await publish(texts);
+                await load();
+                toast('Recuperado.', { tone: 'ok' });
+              } catch (err) {
+                toast(`No se pudo recuperar: ${(err as Error).message}`, { tone: 'warn' });
+              }
+            })(),
+        },
+      });
+    } catch (err) {
+      toast(`Error: ${(err as Error).message}`, { tone: 'warn' });
+    }
+  };
+
   /** Fusiona la palabra `fromKey` dentro de `intoKey`, con «Deshacer». */
   const merge = async (fromKey: string, intoKey: string) => {
     const from = clipsOf(fromKey);
@@ -359,6 +403,13 @@ export function openDevPanel() {
       return void openVideoImporter(active === ALL ? DEFAULT_FOLDER : active);
     }
     if (t.closest('#dev-eval')) return void openPrecision();
+    if (t.closest('#dev-memory')) {
+      return openMemory(async (texts) => {
+        await publish(texts);
+        await load();
+      });
+    }
+    if (t.closest('[data-login]')) return openDevGate(() => void load());
     if (t.closest('[data-retry]')) return void load();
 
     if (t.closest('[data-new-folder]')) {
@@ -410,11 +461,9 @@ export function openDevPanel() {
       }
       if (what === 'delete') {
         const list = itemClips(key);
-        const texts = textsOfClips(list);
-        const ids = list.map((c) => c.id);
         return arm(act, '¿Seguro? Se borra todo', () => {
           menu = null;
-          void guard(() => deleteClips(ids), list.length === 1 ? 'Ejemplo eliminado.' : 'Palabra eliminada.', texts);
+          void removeClips(list, list.length === 1 ? 'Ejemplo eliminado.' : 'Palabra eliminada.');
         });
       }
     }
@@ -436,7 +485,7 @@ export function openDevPanel() {
       const list = itemClips(key).filter((c) => (c.source_name || 'Video sin nombre') === name);
       return arm(delVideo, '¿Seguro?', () => {
         for (const c of list) marked.delete(c.id);
-        void guard(() => deleteClips(list.map((c) => c.id)), `Video «${name}» borrado (${list.length} repetición${list.length === 1 ? '' : 'es'}).`, textsOfClips(list));
+        void removeClips(list, `Video «${name}» borrado (${list.length} repetición${list.length === 1 ? '' : 'es'}).`);
       });
     }
     const delReps = t.closest<HTMLElement>('[data-del-reps]');
@@ -445,7 +494,7 @@ export function openDevPanel() {
       if (!list.length) return;
       return arm(delReps, '¿Seguro? Se borran', () => {
         for (const c of list) marked.delete(c.id);
-        void guard(() => deleteClips(list.map((c) => c.id)), list.length === 1 ? 'Repetición borrada.' : `${list.length} repeticiones borradas.`, textsOfClips(list));
+        void removeClips(list, list.length === 1 ? 'Repetición borrada.' : `${list.length} repeticiones borradas.`);
       });
     }
     const into = t.closest<HTMLElement>('[data-merge-into]');

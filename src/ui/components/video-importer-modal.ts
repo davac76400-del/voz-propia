@@ -457,8 +457,8 @@ export async function openVideoImporter(startFolder = DEFAULT_FOLDER) {
         .join('. ');
       toast(
         published
-          ? `${total} ejemplo${total === 1 ? '' : 's'} guardado${total === 1 ? '' : 's'}. ${merged ? `${merged}.` : 'Publicado para todos.'}`
-          : `${total} ejemplo${total === 1 ? '' : 's'} guardado${total === 1 ? '' : 's'}, pero no se pudo publicar para los demás dispositivos.`,
+          ? `${total} ejemplo${total === 1 ? '' : 's'} guardado${total === 1 ? '' : 's'} (también en la memoria). ${merged ? `${merged}.` : 'Publicado para todos.'}`
+          : `${total} ejemplo${total === 1 ? '' : 's'} guardado${total === 1 ? '' : 's'} (también en la memoria), pero no se pudo publicar para los demás dispositivos.`,
         { tone: published ? 'ok' : 'warn' },
       );
     } catch (err) {

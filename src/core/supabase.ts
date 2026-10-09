@@ -7,9 +7,10 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export const DEFAULT_FOLDER = 'Sin carpeta';
 
+export const SIN_PERMISO = 'Esta sesión no es de programador. Entra con tu contraseña de programador: tus videos siguen guardados.';
+
 /** Error de la base con un texto que se entienda: sin permiso casi siempre es que falta entrar como programador. */
-export const dbError = (e: { message: string; code?: string }) =>
-  new Error(e.code === '42501' ? 'Esta cuenta no tiene permiso de programador. Entra con tu cuenta de programador.' : e.message);
+export const dbError = (e: { message: string; code?: string }) => new Error(e.code === '42501' ? SIN_PERMISO : e.message);
 
 /** ¿La persona que tiene la sesión abierta puede preparar palabras? Lo decide el servidor, no la página. */
 export async function soyProgramador(): Promise<boolean> {
@@ -17,6 +18,14 @@ export async function soyProgramador(): Promise<boolean> {
   if (!data.session) return false;
   const r = await supabase.rpc('soy_programador');
   return !r.error && r.data === true;
+}
+
+/**
+ * Sin sesión de programador la base responde «lista vacía» en vez de error. Antes de tocar videos se comprueba,
+ * para no confundir «no tengo permiso» con «no hay nada» (ni dar por borrado algo que no se pudo ver).
+ */
+export async function requireProgramador(): Promise<void> {
+  if (!(await soyProgramador())) throw new Error(SIN_PERMISO);
 }
 
 /** El servidor da máximo 1000 filas por consulta: se piden por páginas hasta traer todo. */
@@ -87,9 +96,64 @@ export async function insertClips(clips: NewDevClip[]): Promise<void> {
   if (error) throw dbError(error);
 }
 
+/**
+ * Quitar de la lista no es perder: antes de borrar cada video, la base lo copia a la memoria (supabase/migraciones/004)
+ * y desde ahí se recupera con `recoverClips`. Esta es la ÚNICA función de la app que borra videos.
+ */
 export async function deleteClips(ids: number[]): Promise<void> {
-  const { error } = await supabase.from('programmer_videos').delete().in('id', ids);
+  await requireProgramador();
+  for (let i = 0; i < ids.length; i += 100) {
+    const { error } = await supabase.from('programmer_videos').delete().in('id', ids.slice(i, i + 100));
+    if (error) throw dbError(error);
+  }
+}
+
+/** Video que ya no está en la lista pero sigue guardado en la memoria. */
+export interface DeletedClip {
+  video_id: number;
+  text: string;
+  folder: string;
+  source_name: string | null;
+  frame_count: number;
+  created_at: string | null;
+  borrado_en: string;
+}
+
+export async function listDeleted(): Promise<DeletedClip[]> {
+  return allRows<DeletedClip>((a, b) =>
+    supabase
+      .from('memoria_videos')
+      .select('video_id,text,folder,source_name,frame_count,created_at,borrado_en')
+      .not('borrado_en', 'is', null)
+      .order('borrado_en', { ascending: false })
+      .order('video_id')
+      .range(a, b),
+  );
+}
+
+/** Devuelve a la lista (con el mismo número y todo lo suyo) los videos borrados. Sin números: todos los borrados. */
+export async function recoverClips(ids?: number[]): Promise<number> {
+  await requireProgramador();
+  const { data, error } = await supabase.rpc('recuperar_videos', { p_ids: ids ?? null });
   if (error) throw dbError(error);
+  return Number(data ?? 0);
+}
+
+/** Copia completa para guardar fuera de la base: videos, carpetas, palabras publicadas y lo borrado. */
+export async function backupAll() {
+  await requireProgramador();
+  const rows = (table: string, order: string, size: number, only?: string) =>
+    allRows<Record<string, unknown>>((a, b) => {
+      const q = supabase.from(table).select('*');
+      return (only ? q.not(only, 'is', null) : q).order(order).range(a, b);
+    }, size);
+  const [videos, carpetas, palabras, borrados] = await Promise.all([
+    rows('programmer_videos', 'id', 100),
+    rows('programmer_folders', 'name', 1000),
+    rows('shared_phrases', 'text_key', 20),
+    rows('memoria_videos', 'video_id', 100, 'borrado_en'),
+  ]);
+  return { app: 'voz-propia', version: 1, fecha: new Date().toISOString(), videos, carpetas, palabras, borrados };
 }
 
 export async function moveClips(ids: number[], folder: string): Promise<void> {

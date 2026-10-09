@@ -977,3 +977,15 @@
 .dev-metrics dd:nth-of-type(1) {
   font: 700 var(--fs-xl, 1.6rem) / 1.1 var(--font-mono);
 }
+
+/* ---------- Memoria: videos borrados que se pueden recuperar ---------- */
+.dev-memory {
+  display: grid;
+  gap: 8px;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+}
+
+.dev-memory .dev-meta {
+  flex: 1 1 200px;
+}

@@ -40,3 +40,19 @@ escribe una cuenta que esté en la tabla `programadores`. Todos los dispositivos
 La app solo arranca en las direcciones de `ALLOWED_HOSTS` (`vite.config.ts`); si algún día hay dominio propio, ponlo en
 la variable de entorno `VOZ_PROPIA_HOSTS` de Vercel (separado por comas). El código propio se ofusca al construir;
 `NO_OBFUSCATE=1 npm run build` lo deja legible para depurar.
+
+## Los videos del programador no se pierden (memoria)
+
+Cada video que se sube, cambia o borra queda copiado en `memoria_videos` (y cada palabra publicada, en
+`memoria_palabras`). La memoria solo se lee: ni la app ni una migración pueden borrarla, vaciarla o cambiar los
+puntos de labios guardados (`migraciones/004-memoria-videos.sql`). Borrar un video es un `DELETE` normal, pero antes
+la base lo copia a la memoria; en la app, el botón **Memoria** del panel lista lo borrado y lo recupera con su mismo
+número (`migraciones/005-recuperar-videos.sql`), y **Guardar respaldo** baja todo a un archivo `.json`.
+
+- Recuperar todo lo borrado desde SQL: `select public.recuperar_videos();` (con sesión de programador).
+- Volver a publicar la última versión guardada de una palabra: `select public.recuperar_palabra('<llave>');`
+- `npm run build` corre antes `scripts/guard-migrations.mjs`: si una migración o el código puede borrar videos,
+  palabras o su memoria (`DELETE`, `TRUNCATE`, `DROP TABLE`, quitar columnas, apagar disparadores…), el build se detiene
+  y Vercel no publica. Si es a propósito, la migración debe llevar la línea `-- guardia: permitir-destruccion <motivo>`.
+- Si el panel muestra «Tus videos no se ven en esta sesión», no se borró nada: la sesión no es de programador (o se abrió
+  una dirección vieja). Entra con la contraseña de programador en `https://voz-propia-gilt.vercel.app`.
