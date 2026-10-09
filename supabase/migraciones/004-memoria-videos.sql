@@ -148,3 +148,10 @@ insert into public.memoria_palabras (text_key, text, folder, samples, version_de
 select p.text_key, p.text, p.folder, p.samples, p.updated_at, 'inicial'
 from public.shared_phrases p
 where not exists (select 1 from public.memoria_palabras m where m.text_key = p.text_key);
+
+-- Las funciones de los disparadores solo las usa la base: nadie las llama por la API (los disparadores siguen funcionando).
+revoke execute on function public.memoria_videos_copiar() from public, anon, authenticated;
+revoke execute on function public.memoria_palabras_copiar() from public, anon, authenticated;
+revoke execute on function public.memoria_proteger() from public, anon, authenticated;
+revoke execute on function public.memoria_inmutable() from public, anon, authenticated;
+revoke execute on function public.no_vaciar() from public, anon, authenticated;
