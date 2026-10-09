@@ -27,6 +27,7 @@ import { brandMark } from '../brand';
 import { bindHold, holdRing } from '../components/hold';
 import { reducedMotion, sleep, vibrate } from '../dom';
 import { icon } from '../icons';
+import { soyProgramador } from '../../core/supabase';
 import { openDevPanel } from '../components/dev-panel';
 import type { FieldControl, GravityField, Pointer } from './scene';
 
@@ -445,7 +446,7 @@ function template() {
         <div class="l-gate__view" data-view="recuerdo" hidden>
           <h2 data-keep-t>Tus datos</h2>
           <p class="l-gate__p">Guárdalos o anótalos para no olvidarlos.</p>
-          <dl class="l-keep">
+          <dl class="l-keep" data-allow-select>
             <div><dt>Usuario</dt><dd data-keep-user></dd></div>
             <div><dt>Contraseña</dt><dd data-keep-pin></dd></div>
           </dl>
@@ -1414,13 +1415,14 @@ export function mountLanding(app: HTMLElement, opts: Options) {
         return void enter('consejos');
       }
       if (t.closest('[data-dev]')) {
-        return showDevGate();
+        return void showDevGate();
       }
     },
     { signal },
   );
 
-  const showDevGate = () => {
+  /** Solo entra quien tiene la sesión abierta con una cuenta de programador: lo decide el servidor, no esta página. */
+  const showDevGate = async () => {
     const dlg = document.createElement('dialog');
     dlg.className = 'sheet dev-sheet';
     dlg.innerHTML = `
@@ -1429,51 +1431,35 @@ export function mountLanding(app: HTMLElement, opts: Options) {
           <div><p class="kicker">[ Acceso ]</p><h2>Soy programador</h2></div>
           <button class="icon-btn" type="button" data-close aria-label="Cerrar">${icon('x', 20)}</button>
         </header>
-        <form class="dev-gate" onsubmit="return false">
-          <label class="field">
-            <span class="field__label">Contraseña</span>
-            <input type="password" id="dev-pwd" class="input" placeholder="Escribe la contraseña" autocomplete="off">
-          </label>
-          <p id="dev-err" class="field__error" role="alert" hidden></p>
-          <button class="btn btn--primary btn--lg" id="dev-submit" type="button">Entrar</button>
-        </form>
+        <p class="dev-meta" data-dev-msg role="status">Comprobando tu cuenta…</p>
+        <button class="btn btn--primary btn--lg" type="button" data-dev-acct hidden></button>
       </div>`;
-
+    const close = () => {
+      dlg.close();
+      dlg.remove();
+    };
+    dlg.querySelector('[data-close]')!.addEventListener('click', close);
+    dlg.addEventListener('close', () => dlg.remove());
     document.body.appendChild(dlg);
     dlg.showModal();
 
-    const pwdInput = dlg.querySelector<HTMLInputElement>('#dev-pwd')!;
-    const errMsg = dlg.querySelector<HTMLElement>('#dev-err')!;
-    const submitBtn = dlg.querySelector<HTMLButtonElement>('#dev-submit')!;
-    const closeBtn = dlg.querySelector<HTMLButtonElement>('[data-close]')!;
-
-    pwdInput.focus();
-
-    const checkPassword = () => {
-      const pwd = pwdInput.value;
-      if (pwd === '76767678') {
-        dlg.close();
-        dlg.remove();
-        openDevPanel();
-      } else {
-        errMsg.textContent = 'Contraseña incorrecta';
-        errMsg.hidden = false;
-        pwdInput.value = '';
-        pwdInput.focus();
-        vibrate([30, 50, 30]);
-      }
-    };
-
-    submitBtn.addEventListener('click', checkPassword);
-    pwdInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') checkPassword();
+    const s = session();
+    const ok = s?.kind === 'cuenta' && (await soyProgramador().catch(() => false));
+    if (ok) {
+      close();
+      openDevPanel();
+      return;
+    }
+    dlg.querySelector<HTMLElement>('[data-dev-msg]')!.textContent =
+      s?.kind === 'cuenta' ? `La cuenta «${s.name}» no tiene permiso de programador.` : 'Inicia sesión con tu cuenta de programador para entrar.';
+    const btn = dlg.querySelector<HTMLButtonElement>('[data-dev-acct]')!;
+    btn.textContent = s ? 'Cambiar de cuenta' : 'Iniciar sesión';
+    btn.hidden = false;
+    btn.addEventListener('click', () => {
+      close();
+      openGate(session() ? 'cuenta' : 'elegir', true);
     });
-    closeBtn.addEventListener('click', () => {
-      dlg.close();
-      dlg.remove();
-    });
-
-    dlg.addEventListener('close', () => dlg.remove());
+    btn.focus();
   };
 
   return () => {

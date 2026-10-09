@@ -69,6 +69,8 @@ class FaceTracker {
   private stream: MediaStream | null = null;
   private video: HTMLVideoElement | null = null;
   private running = false;
+  /** Cada arranque y cada parada suben el número: un arranque viejo que termina tarde se descarta. */
+  private gen = 0;
   private lastVideoTime = -1;
   private listeners = new Set<Listener>();
   private statusListeners = new Set<StatusListener>();
@@ -126,6 +128,8 @@ class FaceTracker {
   async start(video: HTMLVideoElement, deviceId: string | null = null) {
     if (this.running && this.video === video && (!deviceId || deviceId === this.deviceId)) return;
     this.stop();
+    const me = this.gen;
+    const stale = () => this.gen !== me;
     this.video = video;
     this.setStatus('cargando');
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -141,7 +145,7 @@ class FaceTracker {
     try {
       stream = await openCamera(deviceId);
     } catch (err) {
-      if (this.video !== video) return;
+      if (stale()) return;
       const name = (err as DOMException)?.name;
       if (name === 'NotAllowedError' || name === 'SecurityError') this.setStatus(inFrame() ? 'bloqueada' : 'sin-permiso');
       else if (name === 'NotFoundError' || name === 'OverconstrainedError') this.setStatus('sin-camara');
@@ -150,13 +154,13 @@ class FaceTracker {
       this.stop(false);
       return;
     }
-    if (this.video !== video) {
+    if (stale()) {
       stream.getTracks().forEach((t) => t.stop());
       return;
     }
     this.stream = stream;
     const modelError = await model;
-    if (this.video !== video) return;
+    if (stale()) return;
     if (modelError) {
       this.setStatus('error', modelError);
       this.stop(false);
@@ -179,6 +183,7 @@ class FaceTracker {
   }
 
   stop(resetStatus = true) {
+    this.gen++;
     this.running = false;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;

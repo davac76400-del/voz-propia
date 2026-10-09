@@ -12,10 +12,12 @@ import './ui/styles/creditos.css';
 import './ui/styles/dev.css';
 import './ui/styles/usar.css';
 
+import { allowedHere, blockCopy, deterCopying } from './guard';
 import { go, hashRoute, startRouter, type Route, type View } from './app/router';
 import { loadSettings, state, updateSettings } from './app/state';
 import { session } from './core/auth';
 import { engine } from './core/engine';
+import { soyProgramador } from './core/supabase';
 import { syncShared, watchShared } from './core/shared-sync';
 import { db } from './core/storage/db';
 import type { Role } from './core/types';
@@ -25,6 +27,7 @@ import { currentTheme, loadTheme } from './ui/components/theme';
 import { enableTilt } from './ui/components/tilt';
 import { bindWaterBack, waterBackHTML } from './ui/components/water-back';
 import { toast } from './ui/components/toast';
+import { esc } from './ui/dom';
 import { icon } from './ui/icons';
 import { ajustesView } from './ui/views/ajustes';
 import { creditosView } from './ui/views/creditos';
@@ -116,7 +119,7 @@ function shell(role: Role) {
 /** Botón de cuenta dentro de la app: abre la cuenta (cambiar de cuenta, iniciar sesión o crear una). */
 function acctHTML() {
   const s = session();
-  const name = !s ? 'Cuenta' : s.kind === 'invitado' ? 'Invitado' : s.name.split(' ')[0];
+  const name = esc(!s ? 'Cuenta' : s.kind === 'invitado' ? 'Invitado' : s.name.split(' ')[0]);
   return `<a class="btn btn--ghost btn--sm app-acct" href="#/inicio/cuenta" data-app-acct aria-label="Cuenta: ${name}. Cambiar de cuenta">${icon('user', 16)}<span class="hide-sm">${name}</span></a>`;
 }
 
@@ -172,11 +175,12 @@ async function chooseRole(role: Role, page?: Route) {
 
 async function route() {
   let h = hashRoute();
-  // Entrada discreta para quien prepara la app: no aparece en el menú de elección.
+  // Entrada discreta para quien prepara la app: no aparece en el menú de elección y la comprueba el servidor.
   if (h === 'programador') {
-    await updateSettings({ role: 'programador' });
-    history.replaceState(null, '', '#/panel');
-    h = 'panel';
+    const ok = await soyProgramador().catch(() => false);
+    if (ok) await updateSettings({ role: 'programador' });
+    h = ok ? 'panel' : 'inicio';
+    history.replaceState(null, '', `#/${h}`);
   }
   const kind: Kind = h.startsWith('inicio') || !state.settings.role ? 'inicio' : state.settings.role;
   if (mounted?.kind === kind) return;
@@ -252,6 +256,8 @@ function restartWhenReopened() {
 }
 
 async function boot() {
+  if (!allowedHere()) return blockCopy(app);
+  deterCopying();
   loadTheme();
   enableTilt(document.body);
   await loadSettings();
@@ -279,4 +285,8 @@ async function boot() {
   restartWhenReopened();
 }
 
-void boot();
+boot().catch((err) => {
+  console.error(err);
+  app.innerHTML = '<div class="boot-error" role="alert"><p>Voz Propia no pudo arrancar.</p><button class="btn btn--primary" type="button">Reintentar</button></div>';
+  app.querySelector('button')!.addEventListener('click', () => location.reload());
+});

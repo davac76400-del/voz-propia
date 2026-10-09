@@ -7,6 +7,32 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export const DEFAULT_FOLDER = 'Sin carpeta';
 
+/** Error de la base con un texto que se entienda: sin permiso casi siempre es que falta entrar como programador. */
+export const dbError = (e: { message: string; code?: string }) =>
+  new Error(e.code === '42501' ? 'Esta cuenta no tiene permiso de programador. Entra con tu cuenta de programador.' : e.message);
+
+/** ¿La persona que tiene la sesión abierta puede preparar palabras? Lo decide el servidor, no la página. */
+export async function soyProgramador(): Promise<boolean> {
+  const { data } = await supabase.auth.getSession();
+  if (!data.session) return false;
+  const r = await supabase.rpc('soy_programador');
+  return !r.error && r.data === true;
+}
+
+/** El servidor da máximo 1000 filas por consulta: se piden por páginas hasta traer todo. */
+export async function allRows<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string; code?: string } | null }>,
+  size = 1000,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += size) {
+    const { data, error } = await page(from, from + size - 1);
+    if (error) throw dbError(error);
+    out.push(...(data ?? []));
+    if ((data?.length ?? 0) < size) return out;
+  }
+}
+
 export interface DevClip {
   id: number;
   text: string;
@@ -33,45 +59,42 @@ export interface NewDevClip {
 const LIGHT_COLUMNS = 'id,text,start_time,end_time,frame_count,folder,source_name,created_at,orig_text';
 
 export async function listClips(): Promise<DevClip[]> {
-  const { data, error } = await supabase
-    .from('programmer_videos')
-    .select(LIGHT_COLUMNS)
-    .order('created_at', { ascending: false });
-  if (error) throw new Error(error.message);
-  return (data ?? []) as DevClip[];
+  return allRows<DevClip>((a, b) =>
+    supabase.from('programmer_videos').select(LIGHT_COLUMNS).order('created_at', { ascending: false }).order('id').range(a, b),
+  );
 }
 
 export async function listFolders(): Promise<string[]> {
   const { data, error } = await supabase.from('programmer_folders').select('name').order('name');
-  if (error) throw new Error(error.message);
+  if (error) throw dbError(error);
   return (data ?? []).map((r) => r.name as string);
 }
 
 export async function createFolder(name: string): Promise<void> {
   const { error } = await supabase.from('programmer_folders').insert([{ name }]);
-  if (error) throw new Error(error.message);
+  if (error) throw dbError(error);
 }
 
 export async function deleteFolder(name: string): Promise<void> {
   const moved = await supabase.from('programmer_videos').update({ folder: DEFAULT_FOLDER }).eq('folder', name);
-  if (moved.error) throw new Error(moved.error.message);
+  if (moved.error) throw dbError(moved.error);
   const { error } = await supabase.from('programmer_folders').delete().eq('name', name);
-  if (error) throw new Error(error.message);
+  if (error) throw dbError(error);
 }
 
 export async function insertClips(clips: NewDevClip[]): Promise<void> {
   const { error } = await supabase.from('programmer_videos').insert(clips);
-  if (error) throw new Error(error.message);
+  if (error) throw dbError(error);
 }
 
 export async function deleteClips(ids: number[]): Promise<void> {
   const { error } = await supabase.from('programmer_videos').delete().in('id', ids);
-  if (error) throw new Error(error.message);
+  if (error) throw dbError(error);
 }
 
 export async function moveClips(ids: number[], folder: string): Promise<void> {
   const { error } = await supabase.from('programmer_videos').update({ folder }).in('id', ids);
-  if (error) throw new Error(error.message);
+  if (error) throw dbError(error);
 }
 
 export function watchDevData(onChange: () => void): () => void {
@@ -105,7 +128,7 @@ export async function mergeClips(from: DevClip[], intoText: string, intoFolder: 
       .from('programmer_videos')
       .update({ text: intoText, orig_text: g.orig.trim().toLowerCase() === intoText.trim().toLowerCase() ? null : g.orig, folder: intoFolder })
       .in('id', g.ids);
-    if (error) throw new Error(error.message);
+    if (error) throw dbError(error);
   }
 }
 
@@ -118,7 +141,7 @@ export async function unmergeClips(clips: DevClip[]): Promise<void> {
   }
   for (const [orig, ids] of groups) {
     const { error } = await supabase.from('programmer_videos').update({ text: orig, orig_text: null }).in('id', ids);
-    if (error) throw new Error(error.message);
+    if (error) throw dbError(error);
   }
 }
 
@@ -132,6 +155,6 @@ export async function restoreClips(prev: DevClip[]): Promise<void> {
   }
   for (const g of groups.values()) {
     const { error } = await supabase.from('programmer_videos').update({ text: g.text, orig_text: g.orig, folder: g.folder }).in('id', g.ids);
-    if (error) throw new Error(error.message);
+    if (error) throw dbError(error);
   }
 }

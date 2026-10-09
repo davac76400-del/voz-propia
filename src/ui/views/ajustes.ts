@@ -5,6 +5,7 @@ import { db } from '../../core/storage/db';
 import type { Phrase, Sample } from '../../core/types';
 import { listCameras, tracker } from '../../core/vision/face-tracker';
 import { isPersonalVoice, onVoicesChanged, spanishVoices, speakText } from '../../core/voice/speaker';
+import { CATEGORY_LABEL } from '../../data/default-phrases';
 import { toast } from '../components/toast';
 import { $, esc, on } from '../dom';
 import { icon } from '../icons';
@@ -45,14 +46,24 @@ async function exportBackup() {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
+const CATEGORIES = Object.keys(CATEGORY_LABEL);
+
+/** Un respaldo es un archivo cualquiera: solo entra lo que tiene la forma correcta. */
+const goodPhrase = (p: Phrase) =>
+  typeof p?.id === 'string' && typeof p.text === 'string' && typeof p.order === 'number' && CATEGORIES.includes(p.category) && typeof p.icon === 'string' && /^[a-z0-9-]+$/.test(p.icon);
+const goodSample = (s: Backup['samples'][number]) => {
+  const q = s?.seq;
+  return typeof s?.id === 'string' && typeof s.phraseId === 'string' && Number.isInteger(q?.dims) && q.dims > 0 && Array.isArray(q.frames) && q.frames.length % q.dims === 0 && q.frames.every(Number.isFinite);
+};
+
 async function importBackup(file: File) {
   const data = JSON.parse(await file.text()) as Backup;
   if (data?.app !== 'voz-propia' || !Array.isArray(data.phrases) || !Array.isArray(data.samples)) {
     throw new Error('El archivo no es un respaldo de Voz Propia.');
   }
-  for (const p of data.phrases) await db.putPhrase(p);
-  for (const s of data.samples) await db.putSample({ ...s, seq: { ...s.seq, frames: Float32Array.from(s.seq.frames) } });
-  for (const [id, url] of Object.entries(data.audio ?? {})) await db.putAudio(id, await (await fetch(url)).blob());
+  for (const p of data.phrases.filter(goodPhrase)) await db.putPhrase(p);
+  for (const s of data.samples.filter(goodSample)) await db.putSample({ ...s, seq: { ...s.seq, frames: Float32Array.from(s.seq.frames) } });
+  for (const [id, url] of Object.entries(data.audio ?? {})) if (url.startsWith('data:audio/')) await db.putAudio(id, await (await fetch(url)).blob());
   await engine.reload();
 }
 
@@ -159,7 +170,7 @@ export function ajustesView(root: HTMLElement) {
           </article>
         </div>
 
-        <p class="fineprint">${icon('info', 14)} Voz Propia es una ayuda para comunicarse. No es un dispositivo médico ni reemplaza la atención del personal de salud. Versión 0.10.2.</p>
+        <p class="fineprint">${icon('info', 14)} Voz Propia es una ayuda para comunicarse. No es un dispositivo médico ni reemplaza la atención del personal de salud. Versión ${__APP_VERSION__}.</p>
       </section>`;
   };
 

@@ -23,3 +23,19 @@ configurar Supabase una sola vez. Hay dos caminos; elige **A** (más simple).
 3. `supabase secrets set RESEND_API_KEY=re_... RESEND_FROM_EMAIL="Voz Propia <hola@tudominio.com>" SEND_EMAIL_HOOK_SECRET="v1,whsec_..."`
 
 Sin SMTP propio, Supabase solo manda unos pocos correos por hora y solo a miembros del equipo del proyecto.
+
+## Quién puede preparar palabras (modo programador)
+
+Las tablas de trabajo (`programmer_videos`, `programmer_folders`) y la publicación (`shared_phrases`) solo las lee y
+escribe una cuenta que esté en la tabla `programadores`. Todos los dispositivos siguen leyendo `shared_phrases`.
+
+- Esquema y reglas: `migraciones/001-solo-programadores.sql`, `migraciones/002-verificar-pin.sql`.
+- Dar acceso a otra cuenta (el id sale de `auth.users`):
+  `insert into public.programadores (user_id) values ('<id>');`
+- La función `functions/entrar` lleva el límite de 5 intentos dentro de la base (`verificar_pin`), sin carreras.
+
+## Protección de la copia publicada
+
+La app solo arranca en las direcciones de `ALLOWED_HOSTS` (`vite.config.ts`); si algún día hay dominio propio, ponlo en
+la variable de entorno `VOZ_PROPIA_HOSTS` de Vercel (separado por comas). El código propio se ofusca al construir;
+`NO_OBFUSCATE=1 npm run build` lo deja legible para depurar.

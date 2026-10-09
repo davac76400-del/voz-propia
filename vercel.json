@@ -1,5 +1,19 @@
 {
   "installCommand": "npm ci --ignore-scripts",
   "buildCommand": "npm run build",
-  "outputDirectory": "dist"
+  "outputDirectory": "dist",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' data: blob: https://jgddkuelxaunustjcqfe.supabase.co wss://jgddkuelxaunustjcqfe.supabase.co https://dns.google; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'"
+        },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "camera=(self), microphone=(self), geolocation=(), payment=(), usb=()" }
+      ]
+    }
+  ]
 }

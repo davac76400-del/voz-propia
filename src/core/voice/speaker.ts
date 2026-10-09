@@ -26,7 +26,11 @@ export function isPersonalVoice(v: SpeechSynthesisVoice) {
 
 export function stopSpeaking() {
   synth?.cancel();
-  currentAudio?.pause();
+  if (currentAudio) {
+    currentAudio.pause();
+    // pause() no dispara «ended»: sin esto la promesa de speakPhrase se queda esperando para siempre.
+    currentAudio.dispatchEvent(new Event('ended'));
+  }
   currentAudio = null;
 }
 
@@ -73,12 +77,18 @@ export interface AudioRecording {
 
 export async function recordAudio(): Promise<AudioRecording> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-  const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find((m) => MediaRecorder.isTypeSupported(m));
-  const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-  const chunks: Blob[] = [];
-  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-  rec.start();
   const release = () => stream.getTracks().forEach((t) => t.stop());
+  const chunks: Blob[] = [];
+  let rec: MediaRecorder;
+  try {
+    const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find((m) => MediaRecorder.isTypeSupported(m));
+    rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    rec.start();
+  } catch (err) {
+    release();
+    throw err;
+  }
   return {
     stop: () =>
       new Promise((resolve) => {
