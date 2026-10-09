@@ -1,8 +1,10 @@
 -- Solo las cuentas de programador pueden leer y escribir las tablas de trabajo (videos y carpetas) y publicar palabras.
 -- Todos los dispositivos siguen leyendo shared_phrases: es lo que la app descarga para funcionar.
+-- Se puede correr más de una vez sin problema.
 --
--- Para dar acceso a otra cuenta (el id sale de auth.users):
---   insert into public.programadores (user_id) values ('<id>');
+-- Antes de quitar las reglas viejas (última parte), tu cuenta tiene que estar en la tabla programadores, o te quedas
+-- sin acceso al panel. El id sale de auth.users (columna id):
+--   insert into public.programadores (user_id) values ('<id>') on conflict do nothing;
 
 create table if not exists public.programadores (
   user_id uuid primary key references auth.users (id) on delete cascade,
@@ -17,7 +19,18 @@ as $$ select exists (select 1 from public.programadores where user_id = (select 
 revoke all on function public.soy_programador() from public, anon;
 grant execute on function public.soy_programador() to authenticated;
 
--- Fuera las reglas abiertas a cualquiera.
+-- Reglas nuevas: solo programadores.
+drop policy if exists "programadores administran" on public.programmer_folders;
+create policy "programadores administran" on public.programmer_folders
+  for all to authenticated using ((select public.soy_programador())) with check ((select public.soy_programador()));
+drop policy if exists "programadores administran" on public.programmer_videos;
+create policy "programadores administran" on public.programmer_videos
+  for all to authenticated using ((select public.soy_programador())) with check ((select public.soy_programador()));
+drop policy if exists "programadores publican" on public.shared_phrases;
+create policy "programadores publican" on public.shared_phrases
+  for all to authenticated using ((select public.soy_programador())) with check ((select public.soy_programador()));
+
+-- Fuera las reglas abiertas a cualquiera. La de lectura de shared_phrases («shared read») se queda.
 drop policy if exists "folders delete" on public.programmer_folders;
 drop policy if exists "folders insert" on public.programmer_folders;
 drop policy if exists "folders read" on public.programmer_folders;
@@ -28,11 +41,3 @@ drop policy if exists "videos update" on public.programmer_videos;
 drop policy if exists "shared delete" on public.shared_phrases;
 drop policy if exists "shared insert" on public.shared_phrases;
 drop policy if exists "shared update" on public.shared_phrases;
-
-create policy "programadores administran" on public.programmer_folders
-  for all to authenticated using ((select public.soy_programador())) with check ((select public.soy_programador()));
-create policy "programadores administran" on public.programmer_videos
-  for all to authenticated using ((select public.soy_programador())) with check ((select public.soy_programador()));
-create policy "programadores publican" on public.shared_phrases
-  for all to authenticated using ((select public.soy_programador())) with check ((select public.soy_programador()));
--- La política «shared read» (lectura para todos) se queda como estaba.
