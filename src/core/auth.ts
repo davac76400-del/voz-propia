@@ -164,10 +164,9 @@ export async function abrirSesion(usuario: string): Promise<Session> {
   return current;
 }
 
-/** Iniciar sesión con usuario y contraseña de 4 números (la comprueba el servidor, con límite de intentos). */
-export async function entrarConPin(usuario: string, pin: string): Promise<Session> {
-  if (!/^[0-9]{4}$/.test(pin)) throw new Error('La contraseña son 4 números.');
-  const { data, error } = await supabase.functions.invoke('entrar', { body: { usuario: usuario.trim(), pin } });
+/** Pide a una función del servidor que compruebe las credenciales y abre la sesión que devuelve. */
+async function entrarPorFuncion(fn: string, body: Record<string, string>, usuario: string): Promise<Session> {
+  const { data, error } = await supabase.functions.invoke(fn, { body });
   if (error) {
     let msg = '';
     try {
@@ -183,6 +182,15 @@ export async function entrarConPin(usuario: string, pin: string): Promise<Sessio
   if (v.error) throw new Error('No se pudo abrir la sesión. Intenta otra vez.');
   return abrirSesion(r.usuario ?? usuario);
 }
+
+/** Iniciar sesión con usuario y contraseña de 4 números (la comprueba el servidor, con límite de intentos). */
+export async function entrarConPin(usuario: string, pin: string): Promise<Session> {
+  if (!/^[0-9]{4}$/.test(pin)) throw new Error('La contraseña son 4 números.');
+  return entrarPorFuncion('entrar', { usuario: usuario.trim(), pin }, usuario);
+}
+
+/** Contraseña de programador: el servidor la comprueba (con límite de intentos) y abre la sesión de programador. */
+export const entrarProgramador = (clave: string) => entrarPorFuncion('programador', { clave }, 'Programador');
 
 /** Existe una cuenta con ese usuario (para avisar antes de pedir la contraseña). */
 export async function usuarioExiste(usuario: string): Promise<boolean> {

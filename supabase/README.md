@@ -33,6 +33,7 @@ escribe una cuenta que esté en la tabla `programadores`. Todos los dispositivos
 - Dar acceso a otra cuenta (el id sale de `auth.users`):
   `insert into public.programadores (user_id) values ('<id>');`
 - La función `functions/entrar` lleva el límite de 5 intentos dentro de la base (`verificar_pin`), sin carreras.
+- El modo programador se abre con una contraseña que comprueba el servidor (`functions/programador`, `migraciones/003-clave-programador.sql`); está cifrada en la base y no en el código. Para cambiarla, mira el encabezado de esa migración.
 
 ## Protección de la copia publicada
 
