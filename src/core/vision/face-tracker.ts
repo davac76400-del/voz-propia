@@ -203,29 +203,39 @@ class FaceTracker {
     const v = this.video;
     const lm = this.landmarker;
     if (!this.running || !v || !lm) return;
-    if (v.readyState >= 2 && v.currentTime !== this.lastVideoTime) {
-      this.lastVideoTime = v.currentTime;
-      const t = performance.now();
-      const aspect = v.videoWidth / (v.videoHeight || 1);
-      let frame: TrackFrame = { t, landmarks: null, features: null, openness: 0, aspect };
-      try {
-        const r = lm.detectForVideo(v, t);
-        const face = r.faceLandmarks[0];
-        if (face) {
-          frame = {
-            t,
-            aspect,
-            landmarks: face,
-            features: extractFeatures(face, r.faceBlendshapes[0]?.categories, aspect),
-            openness: mouthOpenness(face, aspect),
-          };
+    try {
+      if (v.readyState >= 2 && v.currentTime !== this.lastVideoTime) {
+        this.lastVideoTime = v.currentTime;
+        const t = performance.now();
+        const aspect = v.videoWidth / (v.videoHeight || 1);
+        let frame: TrackFrame = { t, landmarks: null, features: null, openness: 0, aspect };
+        try {
+          const r = lm.detectForVideo(v, t);
+          const face = r.faceLandmarks[0];
+          if (face) {
+            frame = {
+              t,
+              aspect,
+              landmarks: face,
+              features: extractFeatures(face, r.faceBlendshapes[0]?.categories, aspect),
+              openness: mouthOpenness(face, aspect),
+            };
+          }
+        } catch {
+          // Un cuadro dañado no debe detener el seguimiento.
         }
-      } catch {
-        // Un cuadro dañado no debe detener el seguimiento.
+        for (const fn of this.listeners) {
+          // Si el dibujo o la pantalla fallan en un cuadro, ni el seguimiento se detiene ni se queda sin cuadro quien mide.
+          try {
+            fn(frame);
+          } catch (err) {
+            console.warn('Un escuchador del seguimiento falló:', err);
+          }
+        }
       }
-      for (const fn of this.listeners) fn(frame);
+    } finally {
+      this.schedule();
     }
-    this.schedule();
   }
 }
 
